@@ -1,118 +1,110 @@
 #!/bin/sh
-set -eu
 
+# Stable public entrypoint. The implementation lives under
+# scripts/node/uninstall so the public raw URL can remain unchanged.
+
+set -eu
 umask 077
 
-INSTALL_DIR="/opt/one-node-node"
-UNIT_FILE="/etc/systemd/system/one-node-node.service"
-COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
-INSTALL_RECORD="${INSTALL_DIR}/.installation"
-DEFAULT_STATE_DIR="/var/lib/one-node-node"
-CONTAINER_NAME="one-node-node"
-REQUESTED_MODE=""
+ONE_NODE_ACTION_DEFAULT_BASE_URL="https://raw.githubusercontent.com/voiceofhu/one-node-action"
+ONE_NODE_ACTION_REF_API="https://api.github.com/repos/voiceofhu/one-node-action/git/ref/heads/main"
+ONE_NODE_ENTRYPOINT_TEMP_DIR=""
 
-log() {
-	printf '%s\n' "[one-node-node] $*"
-}
-
-die() {
+entrypoint_die() {
 	printf '%s\n' "[one-node-node] error: $*" >&2
 	exit 1
 }
 
-while [ "$#" -gt 0 ]; do
-	case "$1" in
-		--mode)
-			[ "$#" -ge 2 ] || die "--mode requires native or docker"
-			[ -z "$REQUESTED_MODE" ] || die "--mode may be supplied only once"
-			REQUESTED_MODE=$2
-			shift 2
-			;;
-		--help|-h)
-			printf '%s\n' \
-				"Uninstall One Node." \
-				"" \
-				"Usage: uninstall.sh [--mode <native|docker>]" \
-				"" \
-				"The mode is normally detected from the protected installation record."
-			exit 0
-			;;
-		*) die "unknown argument: $1" ;;
+entrypoint_cleanup() {
+	[ -z "$ONE_NODE_ENTRYPOINT_TEMP_DIR" ] ||
+		rm -rf -- "$ONE_NODE_ENTRYPOINT_TEMP_DIR"
+}
+
+entrypoint_local_implementation() {
+	case "$0" in
+		*/*) ;;
+		*) return 1 ;;
 	esac
-done
-case "$REQUESTED_MODE" in
-	""|native|docker) ;;
-	*) die "--mode must be native or docker" ;;
-esac
 
-[ "$(id -u)" -eq 0 ] || die "run this uninstaller as root"
-command -v realpath >/dev/null 2>&1 || die "realpath is required (install coreutils)"
+	entrypoint_dir=$(CDPATH='' cd -- "$(dirname "$0")" 2>/dev/null && pwd) ||
+		return 1
+	local_implementation="${entrypoint_dir}/scripts/node/uninstall/main.sh"
+	[ -f "$local_implementation" ] && [ ! -L "$local_implementation" ] ||
+		return 1
+	printf '%s\n' "$local_implementation"
+}
 
-installed_mode=""
-state_dir="$DEFAULT_STATE_DIR"
-if [ -e "$INSTALL_RECORD" ]; then
-	[ -f "$INSTALL_RECORD" ] && [ ! -L "$INSTALL_RECORD" ] ||
-		die "installation record must be a regular file"
-	installed_mode=$(sed -n 's/^runtime=//p' "$INSTALL_RECORD" | head -n 1)
-	recorded_state_dir=$(sed -n 's/^state_dir=//p' "$INSTALL_RECORD" | head -n 1)
-	if [ -n "$recorded_state_dir" ]; then
-		state_dir=$recorded_state_dir
-	fi
-fi
-if [ -z "$installed_mode" ]; then
-	if [ -f "$UNIT_FILE" ] && [ ! -L "$UNIT_FILE" ]; then
-		installed_mode="native"
-	elif command -v docker >/dev/null 2>&1 &&
-		docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
-		installed_mode="docker"
-	fi
-fi
+entrypoint_resolve_default_base_url() {
+	response=$(curl -q --proto '=https' --tlsv1.2 \
+		--fail --silent --show-error --no-location \
+		--connect-timeout 10 --max-time 30 --max-filesize 262144 \
+		--header 'Accept: application/vnd.github+json' \
+		--header 'X-GitHub-Api-Version: 2022-11-28' \
+		"$ONE_NODE_ACTION_REF_API") ||
+		entrypoint_die "unable to resolve the uninstaller commit from GitHub"
+	revision=$(printf '%s' "$response" | tr ',' '\n' |
+		awk -F'"' '$2 == "sha" { print $4; exit }')
+	[ "${#revision}" -eq 40 ] ||
+		entrypoint_die "GitHub returned an invalid uninstaller commit"
+	case "$revision" in
+		*[!0-9a-f]*)
+			entrypoint_die "GitHub returned an invalid uninstaller commit"
+			;;
+	esac
+	printf '%s/%s/scripts/node\n' \
+		"$ONE_NODE_ACTION_DEFAULT_BASE_URL" \
+		"$revision"
+}
 
-if [ -z "$installed_mode" ]; then
-	log "no One Node installation was found"
-	exit 0
-fi
-case "$installed_mode" in
-	native|docker) ;;
-	*) die "installation record contains an unsupported runtime" ;;
-esac
-if [ -n "$REQUESTED_MODE" ] && [ "$REQUESTED_MODE" != "$installed_mode" ]; then
-	die "One Node is installed in ${installed_mode} mode, not ${REQUESTED_MODE}"
-fi
+entrypoint_download_implementation() {
+	command -v curl >/dev/null 2>&1 ||
+		entrypoint_die "curl is required to load the uninstaller"
 
-case "$state_dir" in
-	/*) ;;
-	*) die "recorded state directory is not absolute" ;;
-esac
-state_dir=$(realpath -m -- "$state_dir")
-case "$state_dir" in
-	*[!A-Za-z0-9_./-]*) die "recorded state directory contains unsupported characters" ;;
-esac
-case "$state_dir" in
-	/|/bin|/boot|/dev|/etc|/home|/lib|/lib32|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var|"$INSTALL_DIR")
-		die "refusing to remove unsafe state directory: $state_dir"
-		;;
-esac
-
-if [ "$installed_mode" = "native" ]; then
-	command -v systemctl >/dev/null 2>&1 || die "systemd is required to uninstall the native service"
-	systemctl disable --now one-node-node.service >/dev/null 2>&1 || true
-	rm -f -- "$UNIT_FILE"
-	systemctl daemon-reload
-else
-	command -v docker >/dev/null 2>&1 || die "Docker is required to uninstall the Docker service"
-	if [ -f "$COMPOSE_FILE" ] && [ ! -L "$COMPOSE_FILE" ]; then
-		docker compose -f "$COMPOSE_FILE" down --remove-orphans
+	if [ -n "${ONE_NODE_SCRIPT_BASE_URL:-}" ]; then
+		base_url=${ONE_NODE_SCRIPT_BASE_URL%/}
 	else
-		docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+		base_url=$(entrypoint_resolve_default_base_url)
+		base_url=${base_url%/}
 	fi
+
+	case "$base_url" in
+		https://*)
+			transport_protocol='=https'
+			;;
+		http://127.0.0.1:*|http://localhost:*|http://host.orb.internal:*)
+			transport_protocol='=http'
+			;;
+		*)
+			entrypoint_die "ONE_NODE_SCRIPT_BASE_URL must use HTTPS or an approved local development host"
+			;;
+	esac
+
+	ONE_NODE_ENTRYPOINT_TEMP_DIR=$(mktemp -d "/tmp/one-node-uninstaller.XXXXXX")
+	trap entrypoint_cleanup EXIT HUP INT TERM
+	downloaded_implementation="${ONE_NODE_ENTRYPOINT_TEMP_DIR}/main.sh"
+	curl -q --proto "$transport_protocol" --tlsv1.2 \
+		--fail --silent --show-error --no-location \
+		--connect-timeout 10 --max-time 30 --max-filesize 1048576 \
+		"${base_url}/uninstall/main.sh" \
+		--output "$downloaded_implementation" ||
+		entrypoint_die "unable to download the uninstaller implementation"
+	[ -s "$downloaded_implementation" ] ||
+		entrypoint_die "downloaded uninstaller implementation is empty"
+	chmod 0600 "$downloaded_implementation"
+	/bin/sh -n "$downloaded_implementation" ||
+		entrypoint_die "downloaded uninstaller implementation has invalid syntax"
+	implementation=$downloaded_implementation
+}
+
+implementation=$(entrypoint_local_implementation 2>/dev/null || true)
+if [ -z "$implementation" ]; then
+	entrypoint_download_implementation
 fi
 
-rm -rf -- "$INSTALL_DIR"
-if [ -e "$state_dir" ]; then
-	[ -d "$state_dir" ] && [ ! -L "$state_dir" ] ||
-		die "state directory must be a real directory"
-	rm -rf -- "$state_dir"
-fi
-
-log "One Node was uninstalled; Docker and the host Xray installation were preserved"
+set +e
+/bin/sh "$implementation" "$@"
+status=$?
+set -e
+entrypoint_cleanup
+trap - EXIT HUP INT TERM
+exit "$status"

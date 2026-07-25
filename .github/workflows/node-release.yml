@@ -1,0 +1,224 @@
+name: Node Release
+run-name: Node package · ${{ inputs.version_tag }} · ${{ inputs.node_ref || 'main' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_ref:
+        description: one-node-node branch, tag, or commit
+        required: false
+        default: main
+      version_tag:
+        description: Release version, for example v0.1.0
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: node-release-${{ inputs.version_tag }}
+  cancel-in-progress: false
+
+env:
+  NODE_REPOSITORY: voiceofhu/one-node-node
+  RELEASE_REPOSITORY: voiceofhu/one-node-action
+
+jobs:
+  resolve:
+    name: Resolve Node source
+    runs-on: ubuntu-latest
+    outputs:
+      node_sha: ${{ steps.source.outputs.node_sha }}
+      package_version: ${{ steps.source.outputs.package_version }}
+      release_tag: ${{ steps.source.outputs.release_tag }}
+
+    steps:
+      - name: Checkout public Action
+        uses: actions/checkout@v4
+        with:
+          path: one-node-action
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate public entrypoints
+        working-directory: one-node-action
+        run: make check
+
+      - name: Resolve immutable Node source
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          NODE_REF_INPUT: ${{ inputs.node_ref }}
+          VERSION_TAG_INPUT: ${{ inputs.version_tag }}
+        run: |
+          set -Eeuo pipefail
+
+          version=${VERSION_TAG_INPUT#node-v}
+          version=${version#v}
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "version_tag must be a semantic version such as v0.1.0" >&2
+            exit 1
+          }
+
+          node_ref=${NODE_REF_INPUT:-main}
+          node_sha=$(
+            gh api "repos/$NODE_REPOSITORY/commits/$node_ref" --jq .sha
+          )
+          [[ "$node_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "GitHub returned an invalid Node commit" >&2
+            exit 1
+          }
+
+          echo "node_sha=$node_sha" >> "$GITHUB_OUTPUT"
+          echo "package_version=$version" >> "$GITHUB_OUTPUT"
+          echo "release_tag=node-v$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build Linux amd64 Node
+    needs: resolve
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Node
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.NODE_REPOSITORY }}
+          ref: ${{ needs.resolve.outputs.node_sha }}
+          path: one-node-node
+          token: ${{ secrets.GH_TOKEN }}
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout public Action
+        uses: actions/checkout@v4
+        with:
+          path: one-node-action
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: one-node-node/go.mod
+          cache-dependency-path: one-node-node/go.sum
+
+      - name: Test Node
+        working-directory: one-node-node
+        run: make test
+
+      - name: Test installer integration
+        working-directory: one-node-node
+        run: make test-installer
+
+      - name: Build release binary
+        working-directory: one-node-node
+        env:
+          PACKAGE_VERSION: ${{ needs.resolve.outputs.package_version }}
+          NODE_SHA: ${{ needs.resolve.outputs.node_sha }}
+        run: |
+          make build-linux-amd64 \
+            VERSION="v$PACKAGE_VERSION" \
+            COMMIT="$NODE_SHA"
+          file dist/one-node-node-linux-amd64 | grep -q 'statically linked'
+
+      - name: Assemble release assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d release-assets
+          install -m 0755 \
+            one-node-node/dist/one-node-node-linux-amd64 \
+            release-assets/one-node-node-linux-amd64
+          install -m 0755 one-node-action/install.sh release-assets/install.sh
+          install -m 0755 one-node-action/uninstall.sh release-assets/uninstall.sh
+          (
+            cd release-assets
+            sha256sum one-node-node-linux-amd64 \
+              >one-node-node-linux-amd64.sha256
+            sha256sum install.sh >install.sh.sha256
+            sha256sum uninstall.sh >uninstall.sh.sha256
+            sha256sum \
+              one-node-node-linux-amd64 \
+              install.sh \
+              uninstall.sh \
+              >SHA256SUMS
+          )
+
+      - name: Upload complete Node package
+        uses: actions/upload-artifact@v4
+        with:
+          name: one-node-node-${{ needs.resolve.outputs.package_version }}
+          path: release-assets
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish Node package
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: one-node-node-${{ needs.resolve.outputs.package_version }}
+          path: dist
+
+      - name: Publish immutable Action release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          PACKAGE_VERSION: ${{ needs.resolve.outputs.package_version }}
+          NODE_SHA: ${{ needs.resolve.outputs.node_sha }}
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REPOSITORY" = "$RELEASE_REPOSITORY" || {
+            echo "Node packages may only be published by $RELEASE_REPOSITORY." >&2
+            exit 1
+          }
+
+          release_body="Node source: $NODE_REPOSITORY@$NODE_SHA"
+          if existing_release=$(
+            gh release view "$RELEASE_TAG" \
+              --repo "$RELEASE_REPOSITORY" \
+              --json body,assets 2>/dev/null
+          ); then
+            existing_source=$(
+              jq -r '.body // "" | split("\n")[0]' <<<"$existing_release"
+            )
+            test "$existing_source" = "$release_body" || {
+              echo "Release $RELEASE_TAG belongs to a different Node source." >&2
+              exit 1
+            }
+            for asset in \
+              one-node-node-linux-amd64 \
+              one-node-node-linux-amd64.sha256 \
+              install.sh \
+              install.sh.sha256 \
+              uninstall.sh \
+              uninstall.sh.sha256 \
+              SHA256SUMS; do
+              jq -e --arg asset "$asset" \
+                '.assets | any(.[]; .name == $asset)' \
+                <<<"$existing_release" >/dev/null || {
+                  echo "Release $RELEASE_TAG is incomplete; refusing to mutate it." >&2
+                  exit 1
+                }
+            done
+            echo "Immutable Node release $RELEASE_TAG already exists."
+            exit 0
+          fi
+
+          gh release create "$RELEASE_TAG" dist/* \
+            --repo "$RELEASE_REPOSITORY" \
+            --target "$RELEASE_SHA" \
+            --title "One Node v$PACKAGE_VERSION" \
+            --notes "$release_body"

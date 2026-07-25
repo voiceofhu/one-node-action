@@ -5,6 +5,15 @@ ROOT_DIR=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 
 sh -n "$ROOT_DIR/install.sh"
 sh -n "$ROOT_DIR/uninstall.sh"
+sh -n "$ROOT_DIR/scripts/node/install/main.sh"
+sh -n "$ROOT_DIR/scripts/node/uninstall/main.sh"
+
+grep -F "scripts/node/install/main.sh" "$ROOT_DIR/install.sh" >/dev/null
+grep -F "scripts/node/uninstall/main.sh" "$ROOT_DIR/uninstall.sh" >/dev/null
+grep -F "https://raw.githubusercontent.com/voiceofhu/one-node-action" \
+	"$ROOT_DIR/install.sh" >/dev/null
+grep -F "https://raw.githubusercontent.com/voiceofhu/one-node-action" \
+	"$ROOT_DIR/uninstall.sh" >/dev/null
 
 "$ROOT_DIR/install.sh" --help | grep -F "native" >/dev/null
 "$ROOT_DIR/install.sh" --help | grep -F "docker" >/dev/null
