@@ -121,7 +121,7 @@ jobs:
           NODE_SHA: ${{ needs.resolve.outputs.node_sha }}
         run: |
           make build-linux-amd64 \
-            VERSION="v$PACKAGE_VERSION" \
+            VERSION="$PACKAGE_VERSION" \
             COMMIT="$NODE_SHA"
           file dist/one-node-node-linux-amd64 | grep -q 'statically linked'
 

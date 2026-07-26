@@ -1,69 +1,41 @@
+# One Node Action 的 Make 入口。
+# 根文件只负责加载配置和功能模块，并提供统一的命令帮助。
 SHELL := /bin/bash
-
 PROJECT_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-ACTION_REPOSITORY ?= voiceofhu/one-node-action
-ACTION_REF ?= main
-NODE_REF ?= main
-TAG ?=
-GITHUB_API_URL ?= https://api.github.com
-ENV_FILE ?= $(PROJECT_ROOT)/.env
-
-ifneq (,$(wildcard $(ENV_FILE)))
-include $(ENV_FILE)
-export
-endif
 
 .DEFAULT_GOAL := help
 
-.PHONY: help check deploy-node
+# 配置先于命令模块加载，确保发布和检查目标读取同一组路径与仓库参数。
+include $(PROJECT_ROOT)/make/config.mk
+include $(PROJECT_ROOT)/make/check.mk
+include $(PROJECT_ROOT)/make/release.mk
+
+.PHONY: help
 
 help:
 	@printf '%s\n' \
 		"One Node Action" \
 		"" \
 		"用法:" \
-		"  make check" \
-		"  make deploy-node TAG=v0.1.0 [NODE_REF=main]" \
+		"  make <目标> [变量=值]" \
 		"" \
-		"deploy-node 通过 GitHub API 触发公共 Action 仓库的 Node Release workflow。" \
-		"GH_TOKEN 可写入仓库根目录的 .env。"
-
-check:
-	sh -n install.sh uninstall.sh \
-		scripts/node/install/main.sh \
-		scripts/node/uninstall/main.sh \
-		tests/scripts_test.sh
-	./tests/scripts_test.sh
-
-deploy-node:
-	@set -euo pipefail; \
-	tag="$(TAG)"; \
-	[ -n "$$tag" ] || { echo "TAG is required, for example TAG=v0.1.0" >&2; exit 1; }; \
-	version="$${tag#node-v}"; \
-	version="$${version#v}"; \
-	[[ "$$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$$ ]] || { \
-		echo "TAG must be a semantic version such as v0.1.0" >&2; \
-		exit 1; \
-	}; \
-	node_ref="$(NODE_REF)"; \
-	[[ "$$node_ref" =~ ^[0-9A-Za-z._/-]+$$ ]] || { \
-		echo "NODE_REF contains unsupported characters" >&2; \
-		exit 1; \
-	}; \
-	token="$${GH_TOKEN:-}"; \
-	[ -n "$$token" ] || { echo "GH_TOKEN is required" >&2; exit 1; }; \
-	payload=$$(printf \
-		'{"ref":"%s","inputs":{"node_ref":"%s","version_tag":"v%s"}}' \
-		"$(ACTION_REF)" "$$node_ref" "$$version"); \
-	curl --fail --silent --show-error \
-		--request POST \
-		--header "Authorization: Bearer $$token" \
-		--header "Accept: application/vnd.github+json" \
-		--header "X-GitHub-Api-Version: 2022-11-28" \
-		--data "$$payload" \
-		"$(GITHUB_API_URL)/repos/$(ACTION_REPOSITORY)/actions/workflows/node-release.yml/dispatches"; \
-	printf '%s\n' \
-		"Triggered Node Release:" \
-		"  repository: $(ACTION_REPOSITORY)" \
-		"  node_ref:   $$node_ref" \
-		"  release:    node-v$$version"
+		"检查:" \
+		"  check                     校验公开入口、实现脚本和基础行为" \
+		"" \
+		"发布:" \
+		"  deploy-node               生成时间版本、提交并推送标签，再触发 Release workflow" \
+		"" \
+		"常用变量:" \
+		"  VERSION=26.726.1530       可选；默认按上海时间自动生成" \
+		"  TAG=v26.726.1530          可选；覆盖 VERSION，标签规范化为 v<version>" \
+		"  NODE_DIR                  Node 本地仓库，默认 $(NODE_DIR)" \
+		"  NODE_BRANCH               Node 发布分支，默认 $(NODE_BRANCH)" \
+		"  NODE_REMOTE               Node 推送远端，默认 $(NODE_REMOTE)" \
+		"  ACTION_REF=main           Action workflow 分支，默认 $(ACTION_REF)" \
+		"  DRY_RUN=true              只展示发布计划，不更新版本、提交、推送或触发" \
+		"  GH_TOKEN                  GitHub PAT；可写入 $(ENV_FILE)" \
+		"" \
+		"示例:" \
+		"  make check" \
+		"  make deploy-node DRY_RUN=true" \
+		"  make deploy-node"

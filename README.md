@@ -54,12 +54,27 @@ Action 仓库需要配置 `GH_TOKEN` Secret。Token 必须能读取私有
 `voiceofhu/one-node-node`，并能在 `voiceofhu/one-node-action` 运行 workflow
 和创建 Release。
 
-也可以从本地通过 GitHub API 触发：
+也可以从本地完成整套发布：
 
 ```bash
 printf '%s\n' 'GH_TOKEN=ghp_xxx' > .env
-make deploy-node TAG=v0.1.0 NODE_REF=265d977
+make deploy-node DRY_RUN=true
+make deploy-node
 ```
+
+`deploy-node` 会进入同级 `one-node-node` 仓库，要求发布分支工作区干净，
+按上海时区生成 `年后两位.MMDD.HHmm` 版本，例如 `26.726.1530`。同步远端并
+运行 Node 测试后，命令会更新根目录 `VERSION`、只提交版本文件，并原子推送
+发布分支和 `v<version>` 源码标签；随后回到 Action 发布流程，以该不可变标签
+触发 `node-release.yml`，最终在本仓库生成 `node-v<version>` Release。Node
+仓库路径、分支和远端可分别通过
+`NODE_DIR`、`NODE_BRANCH`、`NODE_REMOTE` 覆盖。
+
+默认无需传入版本；需要复现或补发指定版本时，可以通过
+`VERSION=26.726.1530` 或 `TAG=v26.726.1530` 覆盖。
+
+若远端源码标签已经存在，命令不会改写 Node 历史，而是直接复用该标签重新触发
+workflow。`DRY_RUN=true` 只打印完整计划，不更新版本、不提交、不推送也不触发。
 
 `.env` 已被忽略，不要提交 Token。
 
