@@ -1,5 +1,5 @@
 # ==============================================================================
-# Node Release 发布命令
+# Release Node 命令
 # ------------------------------------------------------------------------------
 # 先在同级 Node 仓库更新版本并创建不可变源码标签，再回到公共 Action 仓库
 # 通过 GitHub API 调度打包 workflow。Release 资产仍只由 workflow 生成。
@@ -42,7 +42,7 @@ deploy-node:
 		exit 1; \
 	}; \
 	printf '%s\n' \
-		"Node release plan:" \
+		"Release Node plan:" \
 		"  node_repository:   $(NODE_REPOSITORY)" \
 		"  node_directory:    $$node_dir" \
 		"  node_branch:       $$node_branch" \
@@ -124,9 +124,9 @@ deploy-node:
 		--header "Accept: application/vnd.github+json" \
 		--header "X-GitHub-Api-Version: 2022-11-28" \
 		--data "$$payload" \
-		"$(GITHUB_API_URL)/repos/$(ACTION_REPOSITORY)/actions/workflows/node-release.yml/dispatches"; \
+		"$(GITHUB_API_URL)/repos/$(ACTION_REPOSITORY)/actions/workflows/release-node.yml/dispatches"; \
 	printf '%s\n' \
-		"Triggered Node Release:" \
+		"Triggered Release Node:" \
 		"  repository: $(ACTION_REPOSITORY)" \
 		"  node_ref:   $$source_tag" \
 		"  release:    $$release_tag"

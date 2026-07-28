@@ -1,8 +1,9 @@
 # one-node-action
 
-One Node 的公开安装入口与 Node Release 打包仓库。节点源码保存在私有
+One Node 的公开安装入口与 Node 发布仓库。安装、卸载脚本始终直接来自本仓库
+代码，不进入版本 Release。节点源码保存在私有
 `voiceofhu/one-node-node`；公共 Action 固定检出节点提交，构建 Linux amd64
-二进制，并把产物发布到本仓库的 Release。
+二进制，同时发布原生产物到本仓库 Release、发布 Docker 镜像到 GHCR。
 
 ## 公共入口
 
@@ -26,33 +27,38 @@ SHA，再从该提交加载对应实现；单次执行不会混用不同提交�
 - `install.sh --mode docker`：安装或复用 Docker，以 Compose 运行节点代理。
 - `uninstall.sh`：根据 `/opt/one-node-node/.installation` 自动识别安装方式。
 
-## Node Release
+## Release Node
 
-`.github/workflows/node-release.yml` 是手动触发的公开打包流程：
+`.github/workflows/release-node.yml` 是手动触发的公开发布流程：
 
 1. 校验本仓库的安装、卸载入口；
 2. 使用 `GH_TOKEN` 检出私有 `voiceofhu/one-node-node` 的指定 ref；
 3. 将 ref 固定为完整提交 SHA；
 4. 运行 Go 测试和 Debian 安装器集成测试；
 5. 构建静态 `linux/amd64` 节点二进制；
-6. 在本仓库发布不可变的 `node-v<version>` Release。
+6. 在本仓库发布不可变的 `node-v<version>` Release；
+7. 从同一 Node 提交构建并发布 `linux/amd64` Docker 镜像。
 
 Release assets：
 
 - `one-node-node-linux-amd64`
-- `one-node-node-linux-amd64.sha256`
-- `install.sh`
-- `install.sh.sha256`
-- `uninstall.sh`
-- `uninstall.sh.sha256`
 - `SHA256SUMS`
+
+安装和卸载入口保留在 `main` 分支，由上面的稳定 raw URL 提供，不复制进
+Release。Docker 镜像发布为：
+
+- `ghcr.io/voiceofhu/one-node-node:<version>`
+- `ghcr.io/voiceofhu/one-node-node:sha-<40位Node提交SHA>`
+
+版本 tag 用于部署；完整提交 tag 用于审计和不可变复现。workflow 不发布
+`latest`，避免补发旧版本时意外回滚默认镜像。
 
 若同名 Release 已存在，workflow 只在 Node 源提交和完整资产列表都一致时视为
 成功，不会覆盖已有资产。
 
 Action 仓库需要配置 `GH_TOKEN` Secret。Token 必须能读取私有
 `voiceofhu/one-node-node`，并能在 `voiceofhu/one-node-action` 运行 workflow
-和创建 Release。
+和创建 Release，同时需要对 `voiceofhu/one-node-node` GHCR package 具有写权限。
 
 也可以从本地完成整套发布：
 
@@ -66,7 +72,7 @@ make deploy-node
 按上海时区生成 `年后两位.MMDD.HHmm` 版本，例如 `26.726.1530`。同步远端并
 运行 Node 测试后，命令会更新根目录 `VERSION`、只提交版本文件，并原子推送
 发布分支和 `v<version>` 源码标签；随后回到 Action 发布流程，以该不可变标签
-触发 `node-release.yml`，最终在本仓库生成 `node-v<version>` Release。Node
+触发 `release-node.yml`，最终在本仓库生成 `node-v<version>` Release。Node
 仓库路径、分支和远端可分别通过
 `NODE_DIR`、`NODE_BRANCH`、`NODE_REMOTE` 覆盖。
 
