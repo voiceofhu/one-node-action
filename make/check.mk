@@ -8,7 +8,7 @@
 
 check:
 	sh -n "$(PROJECT_ROOT)/install.sh" "$(PROJECT_ROOT)/uninstall.sh" \
-		"$(PROJECT_ROOT)/scripts/node/install/main.sh" \
-		"$(PROJECT_ROOT)/scripts/node/uninstall/main.sh" \
+		"$(PROJECT_ROOT)"/scripts/node/install/*.sh \
+		"$(PROJECT_ROOT)"/scripts/node/uninstall/*.sh \
 		"$(PROJECT_ROOT)/tests/scripts_test.sh"
 	"$(PROJECT_ROOT)/tests/scripts_test.sh"

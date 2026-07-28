@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Stable public entrypoint. The implementation lives under
+# Stable public entrypoint. The implementation is split under
 # scripts/node/install so the public raw URL can remain unchanged.
 
 set -eu
@@ -8,6 +8,7 @@ umask 077
 
 ONE_NODE_ACTION_DEFAULT_BASE_URL="https://raw.githubusercontent.com/voiceofhu/one-node-action"
 ONE_NODE_ACTION_REF_API="https://api.github.com/repos/voiceofhu/one-node-action/git/ref/heads/main"
+ONE_NODE_INSTALL_MODULES="common.sh config.sh host.sh xray.sh files.sh native.sh docker.sh enrollment.sh main.sh"
 ONE_NODE_ENTRYPOINT_TEMP_DIR=""
 
 entrypoint_die() {
@@ -20,7 +21,7 @@ entrypoint_cleanup() {
 		rm -rf -- "$ONE_NODE_ENTRYPOINT_TEMP_DIR"
 }
 
-entrypoint_local_implementation() {
+entrypoint_local_source_dir() {
 	case "$0" in
 		*/*) ;;
 		*) return 1 ;;
@@ -28,10 +29,10 @@ entrypoint_local_implementation() {
 
 	entrypoint_dir=$(CDPATH='' cd -- "$(dirname "$0")" 2>/dev/null && pwd) ||
 		return 1
-	local_implementation="${entrypoint_dir}/scripts/node/install/main.sh"
-	[ -f "$local_implementation" ] && [ ! -L "$local_implementation" ] ||
+	source_dir="${entrypoint_dir}/scripts/node/install"
+	[ -f "${source_dir}/main.sh" ] && [ ! -L "${source_dir}/main.sh" ] ||
 		return 1
-	printf '%s\n' "$local_implementation"
+	printf '%s\n' "$source_dir"
 }
 
 entrypoint_resolve_default_base_url() {
@@ -51,20 +52,24 @@ entrypoint_resolve_default_base_url() {
 			entrypoint_die "GitHub returned an invalid installer commit"
 			;;
 	esac
-	printf '%s/%s/scripts/node\n' \
+	printf '%s/%s/scripts/node/install\n' \
 		"$ONE_NODE_ACTION_DEFAULT_BASE_URL" \
 		"$revision"
 }
 
-entrypoint_download_implementation() {
+entrypoint_download_modules() {
+	destination=$1
 	command -v curl >/dev/null 2>&1 ||
 		entrypoint_die "curl is required to load the installer"
 
 	if [ -n "${ONE_NODE_SCRIPT_BASE_URL:-}" ]; then
 		base_url=${ONE_NODE_SCRIPT_BASE_URL%/}
+		case "$base_url" in
+			*/install) ;;
+			*) base_url="${base_url}/install" ;;
+		esac
 	else
 		base_url=$(entrypoint_resolve_default_base_url)
-		base_url=${base_url%/}
 	fi
 
 	case "$base_url" in
@@ -79,32 +84,46 @@ entrypoint_download_implementation() {
 			;;
 	esac
 
-	ONE_NODE_ENTRYPOINT_TEMP_DIR=$(mktemp -d "/tmp/one-node-installer.XXXXXX")
-	trap entrypoint_cleanup EXIT HUP INT TERM
-	downloaded_implementation="${ONE_NODE_ENTRYPOINT_TEMP_DIR}/main.sh"
-	curl -q --proto "$transport_protocol" --tlsv1.2 \
-		--fail --silent --show-error --no-location \
-		--connect-timeout 10 --max-time 30 --max-filesize 1048576 \
-		"${base_url}/install/main.sh" \
-		--output "$downloaded_implementation" ||
-		entrypoint_die "unable to download the installer implementation"
-	[ -s "$downloaded_implementation" ] ||
-		entrypoint_die "downloaded installer implementation is empty"
-	chmod 0600 "$downloaded_implementation"
-	/bin/sh -n "$downloaded_implementation" ||
-		entrypoint_die "downloaded installer implementation has invalid syntax"
-	implementation=$downloaded_implementation
+	for module in $ONE_NODE_INSTALL_MODULES; do
+		curl -q --proto "$transport_protocol" --tlsv1.2 \
+			--fail --silent --show-error --no-location \
+			--connect-timeout 10 --max-time 30 --max-filesize 1048576 \
+			"${base_url}/${module}" \
+			--output "${destination}/${module}" ||
+			entrypoint_die "unable to download installer module: $module"
+		[ -s "${destination}/${module}" ] ||
+			entrypoint_die "downloaded installer module is empty: $module"
+		chmod 0600 "${destination}/${module}"
+		/bin/sh -n "${destination}/${module}" ||
+			entrypoint_die "downloaded installer module has invalid syntax: $module"
+	done
 }
 
-implementation=$(entrypoint_local_implementation 2>/dev/null || true)
-if [ -z "$implementation" ]; then
-	entrypoint_download_implementation
-fi
+entrypoint_load_modules() {
+	source_dir=$(entrypoint_local_source_dir 2>/dev/null || true)
+	if [ -z "$source_dir" ]; then
+		ONE_NODE_ENTRYPOINT_TEMP_DIR=$(mktemp -d "/tmp/one-node-installer.XXXXXX")
+		chmod 0700 "$ONE_NODE_ENTRYPOINT_TEMP_DIR"
+		trap entrypoint_cleanup EXIT HUP INT TERM
+		entrypoint_download_modules "$ONE_NODE_ENTRYPOINT_TEMP_DIR"
+		source_dir=$ONE_NODE_ENTRYPOINT_TEMP_DIR
+	fi
 
-set +e
-/bin/sh "$implementation" "$@"
-status=$?
-set -e
-entrypoint_cleanup
-trap - EXIT HUP INT TERM
-exit "$status"
+	for module in $ONE_NODE_INSTALL_MODULES; do
+		module_path="${source_dir}/${module}"
+		[ -f "$module_path" ] && [ ! -L "$module_path" ] ||
+			entrypoint_die "installer module must be a regular file: $module"
+		# shellcheck disable=SC1090
+		. "$module_path"
+	done
+
+	entrypoint_cleanup
+	ONE_NODE_ENTRYPOINT_TEMP_DIR=""
+	trap - EXIT HUP INT TERM
+}
+
+entrypoint_load_modules
+
+if [ "${ONE_NODE_INSTALLER_LIBRARY_ONLY:-0}" != "1" ]; then
+	main "$@"
+fi

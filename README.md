@@ -12,10 +12,10 @@ Server 使用以下稳定 URL：
 - `https://github.com/voiceofhu/one-node-action/raw/refs/heads/main/install.sh`
 - `https://github.com/voiceofhu/one-node-action/raw/refs/heads/main/uninstall.sh`
 
-根目录文件只负责稳定入口和实现加载。实际逻辑按安装、卸载分别放在：
-
-- `scripts/node/install/main.sh`
-- `scripts/node/uninstall/main.sh`
+根目录文件只负责稳定入口和模块加载。实际逻辑按安装、卸载分别放在
+`scripts/node/install/` 与 `scripts/node/uninstall/`，并按公共校验、配置、
+宿主依赖、Xray、文件事务、Native、Docker、注册等待和主流程拆分。模块清单由
+根入口显式声明，远程执行时会从同一个固定 commit 下载并校验语法后统一加载。
 
 通过 raw URL 执行时，入口先从 GitHub API 把 `main` 解析成固定的 40 位提交
 SHA，再从该提交加载对应实现；单次执行不会混用不同提交的文件。本地直接运行
@@ -26,6 +26,13 @@ SHA，再从该提交加载对应实现；单次执行不会混用不同提交�
 - `install.sh --mode native`：安装原生二进制并注册 systemd 服务。
 - `install.sh --mode docker`：安装或复用 Docker，以 Compose 运行节点代理。
 - `uninstall.sh`：根据 `/opt/one-node-node/.installation` 自动识别安装方式。
+
+两种安装方式都会先检查宿主机 Xray。已有可用的 Xray 二进制、官方目录结构、
+GeoData 和已启用且运行中的 `xray.service` 时直接复用；缺失或不完整时，安装器
+会按照 XTLS/Xray-install 官方方式下载 `install-release.sh` 并执行无版本覆盖的
+`install`，由官方脚本选择和安装最新正式版 Xray Core 与 GeoData。One Node 会
+先将脚本保存到受限临时文件并检查 Bash 语法，完成后再确认服务、配置和 GeoData
+均已就绪。卸载 One Node 时保留宿主机 Xray，避免影响同机流量服务。
 
 ## Release Node
 
