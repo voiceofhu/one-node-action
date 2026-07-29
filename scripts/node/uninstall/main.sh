@@ -11,6 +11,7 @@ fi
 main() {
 	umask 077
 	initialize_uninstall_config
+	trap cleanup_uninstall_temp_dir EXIT HUP INT TERM
 	parse_uninstall_arguments "$@"
 
 	[ "$(id -u)" -eq 0 ] || die "run this uninstaller as root"
@@ -29,6 +30,9 @@ main() {
 	else
 		uninstall_docker
 	fi
+	uninstall_xray
 	remove_installation_state
-	log "One Node was uninstalled; Docker and the host Xray installation were preserved"
+	cleanup_uninstall_temp_dir
+	trap - EXIT HUP INT TERM
+	log "One Node was uninstalled"
 }

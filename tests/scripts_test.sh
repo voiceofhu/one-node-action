@@ -6,7 +6,7 @@ TEST_TEMP_DIR=$(mktemp -d)
 trap 'rm -rf -- "$TEST_TEMP_DIR"' EXIT HUP INT TERM
 
 INSTALL_MODULES="common.sh config.sh host.sh xray.sh files.sh native.sh docker.sh enrollment.sh main.sh"
-UNINSTALL_MODULES="common.sh native.sh docker.sh main.sh"
+UNINSTALL_MODULES="common.sh native.sh docker.sh xray.sh main.sh"
 
 sh -n "$ROOT_DIR/install.sh"
 sh -n "$ROOT_DIR/uninstall.sh"
@@ -31,6 +31,14 @@ grep -F 'https://github.com/XTLS/Xray-install/raw/main/install-release.sh' \
 # shellcheck disable=SC2016
 grep -F 'bash "$xray_installer" install' \
 	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
+# The literal installer variable proves the uninstaller delegates to XTLS.
+# shellcheck disable=SC2016
+grep -F 'bash "$xray_installer" remove' \
+	"$ROOT_DIR/scripts/node/uninstall/xray.sh" >/dev/null
+grep -F 'docker ps -aq' \
+	"$ROOT_DIR/scripts/node/uninstall/docker.sh" >/dev/null
+grep -F 'apt-get purge -y' \
+	"$ROOT_DIR/scripts/node/uninstall/docker.sh" >/dev/null
 grep -F 'xray_installation_ready' \
 	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
 # The literal variable expression proves the generated config follows the

@@ -11,9 +11,11 @@ initialize_uninstall_config() {
 	INSTALL_RECORD="${INSTALL_DIR}/.installation"
 	DEFAULT_STATE_DIR="/var/lib/one-node-node"
 	CONTAINER_NAME="one-node-node"
+	ONE_NODE_XRAY_INSTALLER_URL=${ONE_NODE_XRAY_INSTALLER_URL:-https://github.com/XTLS/Xray-install/raw/main/install-release.sh}
 	REQUESTED_MODE=""
 	installed_mode=""
 	state_dir="$DEFAULT_STATE_DIR"
+	UNINSTALL_TEMP_DIR=""
 }
 
 log() {
@@ -31,7 +33,9 @@ show_help() {
 		"" \
 		"Usage: uninstall.sh [--mode <native|docker>]" \
 		"" \
-		"The mode is normally detected from the protected installation record."
+		"The mode is normally detected from the protected installation record." \
+		"Host Xray is removed with the official XTLS installer." \
+		"Docker is removed only when no other containers remain."
 }
 
 parse_uninstall_arguments() {
@@ -101,6 +105,23 @@ validate_installation_state() {
 			die "refusing to remove unsafe state directory: $state_dir"
 			;;
 	esac
+
+	case "$ONE_NODE_XRAY_INSTALLER_URL" in
+		https://*) ;;
+		*) die "ONE_NODE_XRAY_INSTALLER_URL must use HTTPS" ;;
+	esac
+}
+
+prepare_uninstall_temp_dir() {
+	[ -z "$UNINSTALL_TEMP_DIR" ] || return 0
+	UNINSTALL_TEMP_DIR=$(mktemp -d "/tmp/one-node-uninstall.XXXXXX")
+	chmod 0700 "$UNINSTALL_TEMP_DIR"
+}
+
+cleanup_uninstall_temp_dir() {
+	[ -z "$UNINSTALL_TEMP_DIR" ] ||
+		rm -rf -- "$UNINSTALL_TEMP_DIR"
+	UNINSTALL_TEMP_DIR=""
 }
 
 remove_installation_state() {

@@ -8,7 +8,7 @@ umask 077
 
 ONE_NODE_ACTION_DEFAULT_BASE_URL="https://raw.githubusercontent.com/voiceofhu/one-node-action"
 ONE_NODE_ACTION_REF_API="https://api.github.com/repos/voiceofhu/one-node-action/git/ref/heads/main"
-ONE_NODE_UNINSTALL_MODULES="common.sh native.sh docker.sh main.sh"
+ONE_NODE_UNINSTALL_MODULES="common.sh native.sh docker.sh xray.sh main.sh"
 ONE_NODE_ENTRYPOINT_TEMP_DIR=""
 
 entrypoint_die() {

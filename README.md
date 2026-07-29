@@ -32,7 +32,9 @@ GeoData 和已启用且运行中的 `xray.service` 时直接复用；缺失或�
 会按照 XTLS/Xray-install 官方方式下载 `install-release.sh` 并执行无版本覆盖的
 `install`，由官方脚本选择和安装最新正式版 Xray Core 与 GeoData。One Node 会
 先将脚本保存到受限临时文件并检查 Bash 语法，完成后再确认服务、配置和 GeoData
-均已就绪。卸载 One Node 时保留宿主机 Xray，避免影响同机流量服务。
+均已就绪。卸载 One Node 时会再次下载并校验该官方脚本，再执行 `remove` 卸载
+宿主机 Xray。Docker 模式会在移除 One Node 容器后检查全部容器；只有没有其他
+容器时才卸载 Docker Engine，否则保留 Docker。
 
 ## Release Node
 
