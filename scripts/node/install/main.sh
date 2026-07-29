@@ -4,6 +4,12 @@
 # Installer globals are shared across sourced modules.
 # shellcheck disable=SC2034
 
+if ! command -v initialize_install_config >/dev/null 2>&1; then
+	printf '%s\n' \
+		"[one-node-node] error: installer main module must be loaded through install.sh" >&2
+	exit 1
+fi
+
 main() {
 	umask 077
 	initialize_install_config

@@ -33,6 +33,19 @@ grep -F 'bash "$xray_installer" install' \
 	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
 grep -F 'xray_installation_ready' \
 	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
+# The literal variable expression proves the generated config follows the
+# enrollment-provided local API address.
+# shellcheck disable=SC2016
+grep -F '"listen": "${ONE_NODE_XRAY_API_ADDR}"' \
+	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
+grep -F '"statsUserOnline": true' \
+	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
+grep -F 'write_env "XRAY_STATS_INTERVAL" "30s"' \
+	"$ROOT_DIR/scripts/node/install/files.sh" >/dev/null
+grep -F 'write_env "XRAY_MANAGE_SERVICE" "true"' \
+	"$ROOT_DIR/scripts/node/install/files.sh" >/dev/null
+grep -F 'write_env "XRAY_MANAGE_SERVICE" "false"' \
+	"$ROOT_DIR/scripts/node/install/files.sh" >/dev/null
 if grep -Eq '^XRAY_(INSTALLER_COMMIT|INSTALLER_SHA256|VERSION)=' \
 	"$ROOT_DIR/scripts/node/install/xray.sh"; then
 	printf '%s\n' "Xray installation still contains a pinned version or installer revision" >&2
@@ -56,6 +69,20 @@ if "$ROOT_DIR/uninstall.sh" --mode package >/dev/null 2>&1; then
 	printf '%s\n' "uninstaller accepted an unsupported mode" >&2
 	exit 1
 fi
+if sh "$ROOT_DIR/scripts/node/install/main.sh" \
+	>"$TEST_TEMP_DIR/standalone-install-main.log" 2>&1; then
+	printf '%s\n' "installer main module ran without the public module loader" >&2
+	exit 1
+fi
+grep -F "must be loaded through install.sh" \
+	"$TEST_TEMP_DIR/standalone-install-main.log" >/dev/null
+if sh "$ROOT_DIR/scripts/node/uninstall/main.sh" \
+	>"$TEST_TEMP_DIR/standalone-uninstall-main.log" 2>&1; then
+	printf '%s\n' "uninstaller main module ran without the public module loader" >&2
+	exit 1
+fi
+grep -F "must be loaded through uninstall.sh" \
+	"$TEST_TEMP_DIR/standalone-uninstall-main.log" >/dev/null
 
 install -d -m 0755 "$TEST_TEMP_DIR/bin"
 cp "$ROOT_DIR/install.sh" "$TEST_TEMP_DIR/install.sh"
@@ -107,5 +134,88 @@ done
 for module in $UNINSTALL_MODULES; do
 	grep -F "/uninstall/$module" "$TEST_TEMP_DIR/module-requests.log" >/dev/null
 done
+
+install -d -m 0755 \
+	"$TEST_TEMP_DIR/xray-bin" \
+	"$TEST_TEMP_DIR/xray-config" \
+	"$TEST_TEMP_DIR/xray-geodata"
+printf '%s\n' "geoip" > "$TEST_TEMP_DIR/xray-geodata/geoip.dat"
+printf '%s\n' "geosite" > "$TEST_TEMP_DIR/xray-geodata/geosite.dat"
+printf '%s\n' "[Service]" > "$TEST_TEMP_DIR/xray.service"
+cat > "$TEST_TEMP_DIR/xray-bin/xray" <<'FAKE_XRAY'
+#!/bin/sh
+set -eu
+case "${1:-}" in
+	version)
+		printf '%s\n' "Xray 26.test"
+		;;
+	-test)
+		config_path=""
+		while [ "$#" -gt 0 ]; do
+			case "$1" in
+				-config)
+					config_path=$2
+					shift 2
+					;;
+				*) shift ;;
+			esac
+		done
+		[ -n "$config_path" ]
+		! grep -F "INVALID_CONFIG" "$config_path" >/dev/null
+		;;
+	api)
+		[ "${2:-}" = "statsquery" ]
+		[ "${3:-}" = "--server=127.0.0.1:27522" ]
+		;;
+	*)
+		exit 1
+		;;
+esac
+FAKE_XRAY
+chmod 0755 "$TEST_TEMP_DIR/xray-bin/xray"
+
+(
+	for module in $INSTALL_MODULES; do
+		# shellcheck disable=SC1090
+		. "$ROOT_DIR/scripts/node/install/$module"
+	done
+	initialize_install_config
+	initialize_xray_config
+	TEMP_DIR="$TEST_TEMP_DIR/xray-work"
+	install -d -m 0700 "$TEMP_DIR"
+	XRAY_CONFIG_DIR="$TEST_TEMP_DIR/xray-config"
+	XRAY_CONFIG_FILE="${XRAY_CONFIG_DIR}/config.json"
+	XRAY_GEODATA_DIR="$TEST_TEMP_DIR/xray-geodata"
+	XRAY_SERVICE_FILE="$TEST_TEMP_DIR/xray.service"
+	XRAY_MANAGED_CONFIG_MARKER="${XRAY_CONFIG_DIR}/.one-node-managed-config"
+	PATH="$TEST_TEMP_DIR/xray-bin:$PATH"
+	export PATH XRAY_GEODATA_DIR XRAY_SERVICE_FILE
+	XRAY_BINARY_HOST=$(resolve_xray_binary)
+	export XRAY_BINARY_HOST
+
+	printf '%s\n' '{}' > "$XRAY_CONFIG_FILE"
+	prepare_xray_config
+	[ "$XRAY_CONFIG_OWNERSHIP" = "managed" ]
+	grep -F '"listen": "127.0.0.1:27522"' "$XRAY_CONFIG_FILE" >/dev/null
+	grep -F '"HandlerService"' "$XRAY_CONFIG_FILE" >/dev/null
+	grep -F '"StatsService"' "$XRAY_CONFIG_FILE" >/dev/null
+	grep -F '"statsUserOnline": true' "$XRAY_CONFIG_FILE" >/dev/null
+	[ -f "$XRAY_MANAGED_CONFIG_MARKER" ]
+
+	printf '%s\n' '{"log":{"loglevel":"error"},"inbounds":[]}' \
+		> "$XRAY_CONFIG_FILE"
+	custom_sha=$(sha256sum "$XRAY_CONFIG_FILE" | awk '{ print $1 }')
+	prepare_xray_config
+	[ "$XRAY_CONFIG_OWNERSHIP" = "existing" ]
+	[ "$(sha256sum "$XRAY_CONFIG_FILE" | awk '{ print $1 }')" = "$custom_sha" ]
+
+	printf '%s\n' 'INVALID_CONFIG' > "$XRAY_CONFIG_FILE"
+	invalid_sha=$(sha256sum "$XRAY_CONFIG_FILE" | awk '{ print $1 }')
+	if (prepare_xray_config) >/dev/null 2>&1; then
+		printf '%s\n' "invalid existing Xray config was accepted" >&2
+		exit 1
+	fi
+	[ "$(sha256sum "$XRAY_CONFIG_FILE" | awk '{ print $1 }')" = "$invalid_sha" ]
+)
 
 printf '%s\n' "One Node action script checks passed"

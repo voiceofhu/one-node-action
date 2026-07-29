@@ -2,6 +2,12 @@
 
 # One Node uninstaller orchestration. Runtime logic lives in sibling modules.
 
+if ! command -v initialize_uninstall_config >/dev/null 2>&1; then
+	printf '%s\n' \
+		"[one-node-node] error: uninstaller main module must be loaded through uninstall.sh" >&2
+	exit 1
+fi
+
 main() {
 	umask 077
 	initialize_uninstall_config

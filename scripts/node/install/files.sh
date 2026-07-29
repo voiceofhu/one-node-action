@@ -157,6 +157,15 @@ write_common_sources() {
 	write_env "XRAY_API_ADDR" "$ONE_NODE_XRAY_API_ADDR"
 	write_env "XRAY_CONFIG_PATH" "/usr/local/etc/xray/config.json"
 	write_env "XRAY_BINARY_PATH" "xray"
+	write_env "XRAY_SERVICE_NAME" "xray.service"
+	write_env "XRAY_STATS_INTERVAL" "30s"
+	if [ "$INSTALL_MODE" = "native" ]; then
+		write_env "XRAY_MANAGE_SERVICE" "true"
+	else
+		# The Docker agent shares the host config and Xray API, but it must not
+		# receive Docker socket or host D-Bus access just to restart systemd.
+		write_env "XRAY_MANAGE_SERVICE" "false"
+	fi
 	write_env "LOG_LEVEL" "info"
 
 	printf '%s\n' \

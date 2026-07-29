@@ -31,6 +31,8 @@ validate_install_host() {
 	command -v grep >/dev/null 2>&1 || die "grep is required"
 	command -v stat >/dev/null 2>&1 ||
 		die "stat is required (install coreutils)"
+	command -v timeout >/dev/null 2>&1 ||
+		die "timeout is required (install coreutils)"
 }
 
 validate_install_mode_transition() {
