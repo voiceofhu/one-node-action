@@ -93,6 +93,36 @@ workflow。`DRY_RUN=true` 只打印完整计划，不更新版本、不提交、
 
 `.env` 已被忽略，不要提交 Token。
 
+## Deploy Server
+
+`make deploy-server` 会触发 `.github/workflows/server.yml`，固定 Server 与 Web
+的完整提交，先把 Web 构建为 Next.js 静态 `out`，再将它和 Go Server 一起构建
+为 `linux/amd64` Docker 镜像并上传到 GHCR。默认版本仍按上海时区生成，也可用
+`VERSION` 或 `TAG` 指定：
+
+```bash
+make deploy-server DRY_RUN=true
+make deploy-server
+make deploy-server VERSION=26.804.1530
+```
+
+每次发布都会生成以下镜像标签：
+
+- `ghcr.io/voiceofhu/one-node-server:<version>`
+- `ghcr.io/voiceofhu/one-node-server:sha-<server-sha>-web-<web-sha>`
+- `ghcr.io/voiceofhu/one-node-server:latest`
+
+部署始终使用同时固定 Server/Web 提交的标签，不使用 `latest`。Action 需要
+`GH_TOKEN` 以及 `DEPLOY_USER`、`DEPLOY_SSH_KEY`、`DEPLOY_KNOWN_HOSTS` 三个
+Repository Secrets。`DEPLOY_KNOWN_HOSTS` 的第一条非注释记录必须是未哈希的
+部署主机；workflow 从该记录读取主机和可选端口，不需要额外的 Host Secret。
+
+远端 `/opt/one-node` 需要预先存在且可写，并包含生产 `.env`。部署用户需要直接
+运行 Docker/Compose；workflow 只原子更新 `docker-compose.yml`，不会上传、覆盖
+或打印 `.env`。默认接入外部 `db-networks`，HTTP 映射到
+`127.0.0.1:27520`，控制通道映射到 `127.0.0.1:27524`。部署完成后会同时检查
+`/api/healthz` 和 `/` 静态站点；失败时尝试恢复上一镜像。
+
 ## 检查
 
 ```bash

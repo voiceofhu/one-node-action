@@ -9,6 +9,7 @@ PROJECT_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 include $(PROJECT_ROOT)/make/config.mk
 include $(PROJECT_ROOT)/make/check.mk
 include $(PROJECT_ROOT)/make/release.mk
+include $(PROJECT_ROOT)/make/server.mk
 
 .PHONY: help
 
@@ -24,6 +25,7 @@ help:
 		"" \
 		"发布:" \
 		"  deploy-node               生成时间版本、提交并推送标签，再触发 Release workflow" \
+		"  deploy-server             构建版本化 Server 镜像并部署到生产服务器" \
 		"" \
 		"常用变量:" \
 		"  VERSION=26.726.1530       可选；默认按上海时间自动生成" \
@@ -31,6 +33,8 @@ help:
 		"  NODE_DIR                  Node 本地仓库，默认 $(NODE_DIR)" \
 		"  NODE_BRANCH               Node 发布分支，默认 $(NODE_BRANCH)" \
 		"  NODE_REMOTE               Node 推送远端，默认 $(NODE_REMOTE)" \
+		"  SERVER_REF                Server 构建 ref，默认 $(SERVER_REF)" \
+		"  WEB_REF                   Web 构建 ref，默认 $(WEB_REF)" \
 		"  ACTION_REF=main           Action workflow 分支，默认 $(ACTION_REF)" \
 		"  DRY_RUN=true              只展示发布计划，不更新版本、提交、推送或触发" \
 		"  GH_TOKEN                  GitHub PAT；可写入 $(ENV_FILE)" \
@@ -38,4 +42,6 @@ help:
 		"示例:" \
 		"  make check" \
 		"  make deploy-node DRY_RUN=true" \
-		"  make deploy-node"
+		"  make deploy-node" \
+		"  make deploy-server DRY_RUN=true" \
+		"  make deploy-server"

@@ -1,0 +1,256 @@
+name: Deploy Server
+run-name: Deploy Server · v${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_ref:
+        description: one-node-server branch, tag, or commit
+        required: false
+        default: main
+      web_ref:
+        description: one-node-web branch, tag, or commit
+        required: false
+        default: main
+      version:
+        description: Docker image version without the v prefix
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-one-node-server
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  SERVER_REPOSITORY: voiceofhu/one-node-server
+  WEB_REPOSITORY: voiceofhu/one-node-web
+  IMAGE_NAME: voiceofhu/one-node-server
+
+jobs:
+  resolve:
+    name: Resolve source
+    runs-on: ubuntu-latest
+    outputs:
+      server_sha: ${{ steps.source.outputs.server_sha }}
+      web_sha: ${{ steps.source.outputs.web_sha }}
+      version: ${{ steps.source.outputs.version }}
+      image_ref: ${{ steps.source.outputs.image_ref }}
+      revision_tag: ${{ steps.source.outputs.revision_tag }}
+      gh_username: ${{ steps.identity.outputs.login }}
+
+    steps:
+      - name: Resolve immutable source
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          SERVER_REF_INPUT: ${{ inputs.server_ref }}
+          WEB_REF_INPUT: ${{ inputs.web_ref }}
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+
+          version=${VERSION_INPUT#v}
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "version must be semantic, for example 26.804.1530" >&2
+            exit 1
+          }
+
+          server_sha=$(gh api "repos/$SERVER_REPOSITORY/commits/${SERVER_REF_INPUT:-main}" --jq .sha)
+          web_sha=$(gh api "repos/$WEB_REPOSITORY/commits/${WEB_REF_INPUT:-main}" --jq .sha)
+          [[ "$server_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$web_sha" =~ ^[0-9a-f]{40}$ ]]
+
+          image_name=$(printf '%s' "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')
+          {
+            echo "server_sha=$server_sha"
+            echo "web_sha=$web_sha"
+            echo "version=$version"
+            echo "image_ref=$REGISTRY/$image_name"
+            echo "revision_tag=sha-$server_sha-web-$web_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve GitHub token identity
+        id: identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: echo "login=$(gh api user --jq .login)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and push linux/amd64 image
+    needs: resolve
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Server
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SERVER_REPOSITORY }}
+          ref: ${{ needs.resolve.outputs.server_sha }}
+          path: server
+          token: ${{ secrets.GH_TOKEN }}
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout Web
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.WEB_REPOSITORY }}
+          ref: ${{ needs.resolve.outputs.web_sha }}
+          path: web
+          token: ${{ secrets.GH_TOKEN }}
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build Web static export
+        shell: bash
+        working-directory: web
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm build
+          test -f out/index.html
+
+      - name: Stage Web output in Server context
+        shell: bash
+        run: |
+          install -d server/frontend-out
+          cp -R web/out/. server/frontend-out/
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ needs.resolve.outputs.gh_username }}
+          password: ${{ secrets.GH_TOKEN }}
+
+      - name: Build and push Server image
+        uses: docker/build-push-action@v6
+        with:
+          context: server
+          file: server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ needs.resolve.outputs.image_ref }}:${{ needs.resolve.outputs.version }}
+            ${{ needs.resolve.outputs.image_ref }}:${{ needs.resolve.outputs.revision_tag }}
+            ${{ needs.resolve.outputs.image_ref }}:latest
+          build-args: |
+            VERSION=${{ needs.resolve.outputs.version }}
+            COMMIT=${{ needs.resolve.outputs.server_sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/voiceofhu/one-node-server
+            org.opencontainers.image.revision=${{ needs.resolve.outputs.server_sha }}
+            org.opencontainers.image.version=${{ needs.resolve.outputs.version }}
+            io.one-node.web.revision=${{ needs.resolve.outputs.web_sha }}
+          cache-from: type=gha,scope=one-node-server-amd64
+          cache-to: type=gha,scope=one-node-server-amd64,mode=max
+
+  deploy:
+    name: Deploy Server
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Server deployment files
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SERVER_REPOSITORY }}
+          ref: ${{ needs.resolve.outputs.server_sha }}
+          path: server
+          token: ${{ secrets.GH_TOKEN }}
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout deployment Action
+        uses: actions/checkout@v4
+        with:
+          path: action
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Configure SSH
+        id: ssh
+        shell: bash
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          for name in DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            test -n "${!name:-}" || { echo "$name is required" >&2; exit 1; }
+          done
+
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/one-node-deploy"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/one-node-deploy" "$HOME/.ssh/known_hosts"
+
+          host_entry=$(awk 'NF && $1 !~ /^#/ { split($1, values, ","); print values[1]; exit }' "$HOME/.ssh/known_hosts")
+          case "$host_entry" in
+            \|*)
+              echo "DEPLOY_KNOWN_HOSTS must start with one unhashed deployment host" >&2
+              exit 1
+              ;;
+            \[*\]:*)
+              deploy_host=${host_entry#\[}
+              deploy_host=${deploy_host%\]:*}
+              deploy_port=${host_entry##*\]:}
+              ;;
+            *)
+              deploy_host=$host_entry
+              deploy_port=22
+              ;;
+          esac
+          test -n "$deploy_host"
+
+          cat > "$HOME/.ssh/config" <<EOF
+          Host one-node-deploy
+            HostName $deploy_host
+            Port $deploy_port
+            User $DEPLOY_USER
+            IdentityFile $HOME/.ssh/one-node-deploy
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking yes
+          EOF
+          chmod 0600 "$HOME/.ssh/config"
+
+      - name: Deploy immutable image
+        shell: bash
+        env:
+          SSH_HOST: one-node-deploy
+          REMOTE_DIR: /opt/one-node
+          DOCKER_IMAGE: ${{ needs.resolve.outputs.image_ref }}:${{ needs.resolve.outputs.revision_tag }}
+          COMPOSE_FILE: server/deployments/docker-compose.yml
+          GHCR_USERNAME: ${{ needs.resolve.outputs.gh_username }}
+          GHCR_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: bash action/.github/scripts/deploy-server.sh
+
+      - name: Log server out of GitHub Container Registry
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: bash
+        run: ssh one-node-deploy docker logout ghcr.io
