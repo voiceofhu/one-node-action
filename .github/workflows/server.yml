@@ -81,23 +81,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: echo "login=$(gh api user --jq .login)" >> "$GITHUB_OUTPUT"
 
-  build:
-    name: Build and push linux/amd64 image
+  frontend:
+    name: Build Web static export
     needs: resolve
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Server
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.SERVER_REPOSITORY }}
-          ref: ${{ needs.resolve.outputs.server_sha }}
-          path: server
-          token: ${{ secrets.GH_TOKEN }}
-          clean: true
-          fetch-depth: 1
-          persist-credentials: false
-
       - name: Checkout Web
         uses: actions/checkout@v4
         with:
@@ -124,11 +113,49 @@ jobs:
           pnpm build
           test -f out/index.html
 
-      - name: Stage Web output in Server context
-        shell: bash
-        run: |
-          install -d server/frontend-out
-          cp -R web/out/. server/frontend-out/
+      - name: Upload Web static export
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-out
+          path: web/out
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
+
+  build:
+    name: Build and push linux/${{ matrix.suffix }} image
+    needs:
+      - resolve
+      - frontend
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            suffix: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            suffix: arm64
+
+    steps:
+      - name: Checkout Server
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SERVER_REPOSITORY }}
+          ref: ${{ needs.resolve.outputs.server_sha }}
+          path: server
+          token: ${{ secrets.GH_TOKEN }}
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download Web static export
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-out
+          path: server/frontend-out
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -145,12 +172,10 @@ jobs:
         with:
           context: server
           file: server/Dockerfile
-          platforms: linux/amd64
+          platforms: ${{ matrix.platform }}
           push: true
           tags: |
-            ${{ needs.resolve.outputs.image_ref }}:${{ needs.resolve.outputs.version }}
-            ${{ needs.resolve.outputs.image_ref }}:${{ needs.resolve.outputs.revision_tag }}
-            ${{ needs.resolve.outputs.image_ref }}:latest
+            ${{ needs.resolve.outputs.image_ref }}:${{ needs.resolve.outputs.revision_tag }}-${{ matrix.suffix }}
           build-args: |
             VERSION=${{ needs.resolve.outputs.version }}
             COMMIT=${{ needs.resolve.outputs.server_sha }}
@@ -159,14 +184,46 @@ jobs:
             org.opencontainers.image.revision=${{ needs.resolve.outputs.server_sha }}
             org.opencontainers.image.version=${{ needs.resolve.outputs.version }}
             io.one-node.web.revision=${{ needs.resolve.outputs.web_sha }}
-          cache-from: type=gha,scope=one-node-server-amd64
-          cache-to: type=gha,scope=one-node-server-amd64,mode=max
+          cache-from: type=gha,scope=one-node-server-${{ matrix.suffix }}
+          cache-to: type=gha,scope=one-node-server-${{ matrix.suffix }},mode=max
+
+  manifest:
+    name: Publish multi-platform manifest
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ needs.resolve.outputs.gh_username }}
+          password: ${{ secrets.GH_TOKEN }}
+
+      - name: Publish Server image manifests
+        shell: bash
+        env:
+          IMAGE: ${{ needs.resolve.outputs.image_ref }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          REVISION_TAG: ${{ needs.resolve.outputs.revision_tag }}
+        run: |
+          docker buildx imagetools create \
+            -t "$IMAGE:$VERSION" \
+            -t "$IMAGE:$REVISION_TAG" \
+            -t "$IMAGE:latest" \
+            "$IMAGE:$REVISION_TAG-amd64" \
+            "$IMAGE:$REVISION_TAG-arm64"
 
   deploy:
     name: Deploy Server
     needs:
       - resolve
-      - build
+      - manifest
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
