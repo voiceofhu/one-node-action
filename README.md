@@ -36,6 +36,12 @@ GeoData 和已启用且运行中的 `xray.service` 时直接复用；缺失或�
 宿主机 Xray。Docker 模式会在移除 One Node 容器后检查全部容器；只有没有其他
 容器时才卸载 Docker Engine，否则保留 Docker。
 
+默认情况下，安装器从本仓库最新 GitHub Release 下载 `SHA256SUMS`，解析
+`one-node-node-linux-amd64` 的 digest，再下载并校验节点二进制。因此 Server
+只需要生成控制地址、节点 ID 和一次性 token，不需要配置发布资产 URL。测试或
+私有发布仍可成对传入 `ONE_NODE_BINARY_URL` 与
+`ONE_NODE_BINARY_SHA256` 覆盖默认资产。
+
 ## Release Node
 
 `.github/workflows/release-node.yml` 是手动触发的公开发布流程：

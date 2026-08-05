@@ -24,6 +24,8 @@ initialize_install_config() {
 	ONE_NODE_ALLOW_INSECURE=${ONE_NODE_ALLOW_INSECURE:-false}
 	ONE_NODE_ENROLL_TIMEOUT=${ONE_NODE_ENROLL_TIMEOUT:-60}
 	ONE_NODE_DOCKER_IMAGE=${ONE_NODE_DOCKER_IMAGE:-debian:bookworm-slim}
+	ONE_NODE_RELEASE_BASE_URL="https://github.com/voiceofhu/one-node-action/releases/latest/download"
+	ONE_NODE_BINARY_NAME="one-node-node-linux-amd64"
 }
 
 parse_install_arguments() {
@@ -51,6 +53,7 @@ validate_install_config() {
 	require_value "ONE_NODE_SERVER" "$ONE_NODE_SERVER"
 	require_value "ONE_NODE_ID" "$ONE_NODE_ID"
 	require_value "ONE_NODE_BOOTSTRAP_TOKEN" "$ONE_NODE_BOOTSTRAP_TOKEN"
+	resolve_binary_release
 	require_value "ONE_NODE_BINARY_URL" "$ONE_NODE_BINARY_URL"
 	require_value "ONE_NODE_BINARY_SHA256" "$ONE_NODE_BINARY_SHA256"
 
@@ -124,4 +127,24 @@ validate_install_config() {
 	ONE_NODE_BINARY_SHA256=$(normalize_sha256 "$ONE_NODE_BINARY_SHA256")
 	validate_sha256 "$ONE_NODE_BINARY_SHA256" ||
 		die "ONE_NODE_BINARY_SHA256 must be a 64-character hexadecimal digest"
+}
+
+resolve_binary_release() {
+	if [ -n "$ONE_NODE_BINARY_URL" ] || [ -n "$ONE_NODE_BINARY_SHA256" ]; then
+		[ -n "$ONE_NODE_BINARY_URL" ] && [ -n "$ONE_NODE_BINARY_SHA256" ] ||
+			die "ONE_NODE_BINARY_URL and ONE_NODE_BINARY_SHA256 must be provided together"
+		return
+	fi
+
+	checksums_file=$(mktemp)
+	if ! download_binary "${ONE_NODE_RELEASE_BASE_URL}/SHA256SUMS" "$checksums_file"; then
+		rm -f "$checksums_file"
+		die "unable to download the latest One Node release checksums"
+	fi
+	ONE_NODE_BINARY_SHA256=$(awk -v name="$ONE_NODE_BINARY_NAME" '$2 == name { print $1; exit }' "$checksums_file")
+	rm -f "$checksums_file"
+	ONE_NODE_BINARY_SHA256=$(normalize_sha256 "$ONE_NODE_BINARY_SHA256")
+	validate_sha256 "$ONE_NODE_BINARY_SHA256" ||
+		die "latest One Node release does not contain a valid checksum for $ONE_NODE_BINARY_NAME"
+	ONE_NODE_BINARY_URL="${ONE_NODE_RELEASE_BASE_URL}/${ONE_NODE_BINARY_NAME}"
 }

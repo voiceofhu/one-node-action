@@ -75,10 +75,18 @@ trap rollback ERR
 compose docker-compose.yml.next pull "$service_name"
 compose docker-compose.yml.next up -d "$service_name"
 
-published_port=$(docker port "$container_name" 27520/tcp | sed -n '1s/.*://p')
-test -n "$published_port"
 for attempt in $(seq 1 30); do
-	if curl --fail --silent --show-error "http://127.0.0.1:${published_port}/api/healthz" >/dev/null &&
+	container_status=$(docker inspect --format '{{.State.Status}}' "$container_name" 2>/dev/null || true)
+	case "$container_status" in
+		restarting | exited | dead)
+			echo "Container $container_name entered $container_status during startup" >&2
+			docker logs --tail 120 "$container_name" >&2 || true
+			false
+			;;
+	esac
+	published_port=$(docker port "$container_name" 27520/tcp 2>/dev/null | sed -n '1s/.*://p' || true)
+	if [ -n "$published_port" ] &&
+		curl --fail --silent --show-error "http://127.0.0.1:${published_port}/api/healthz" >/dev/null &&
 		curl --fail --silent --show-error "http://127.0.0.1:${published_port}/" >/dev/null; then
 		echo "One Node Server is healthy and serving Web at /"
 		break
