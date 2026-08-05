@@ -40,7 +40,8 @@ GeoData 和已启用且运行中的 `xray.service` 时直接复用；缺失或�
 `one-node-node-linux-amd64` 的 digest，再下载并校验节点二进制。因此 Server
 只需要生成控制地址、节点 ID 和一次性 token，不需要配置发布资产 URL。测试或
 私有发布仍可成对传入 `ONE_NODE_BINARY_URL` 与
-`ONE_NODE_BINARY_SHA256` 覆盖默认资产。
+`ONE_NODE_BINARY_SHA256` 覆盖默认资产。Server 默认生成简短的 `curl | sh`
+命令，目标 Debian 需要预先提供 `curl`；安装器会继续检查其余必备命令。
 
 ## Release Node
 
