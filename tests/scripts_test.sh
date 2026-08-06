@@ -31,6 +31,9 @@ grep -F 'https://github.com/XTLS/Xray-install/raw/main/install-release.sh' \
 # shellcheck disable=SC2016
 grep -F 'bash "$xray_installer" install' \
 	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
+# shellcheck disable=SC2016
+grep -F 'bash "$xray_installer" install -u root' \
+	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
 # The literal installer variable proves the uninstaller delegates to XTLS.
 # shellcheck disable=SC2016
 grep -F 'bash "$xray_installer" remove' \
@@ -195,6 +198,8 @@ chmod 0755 "$TEST_TEMP_DIR/xray-bin/xray"
 	XRAY_CONFIG_FILE="${XRAY_CONFIG_DIR}/config.json"
 	XRAY_GEODATA_DIR="$TEST_TEMP_DIR/xray-geodata"
 	XRAY_SERVICE_FILE="$TEST_TEMP_DIR/xray.service"
+	XRAY_SERVICE_OVERRIDE_DIR="${XRAY_SERVICE_FILE}.d"
+	XRAY_SERVICE_USER_OVERRIDE_FILE="${XRAY_SERVICE_OVERRIDE_DIR}/99-one-node-service-user.conf"
 	XRAY_MANAGED_CONFIG_MARKER="${XRAY_CONFIG_DIR}/.one-node-managed-config"
 	PATH="$TEST_TEMP_DIR/xray-bin:$PATH"
 	export PATH XRAY_GEODATA_DIR XRAY_SERVICE_FILE
@@ -209,6 +214,15 @@ chmod 0755 "$TEST_TEMP_DIR/xray-bin/xray"
 	grep -F '"StatsService"' "$XRAY_CONFIG_FILE" >/dev/null
 	grep -F '"statsUserOnline": true' "$XRAY_CONFIG_FILE" >/dev/null
 	[ -f "$XRAY_MANAGED_CONFIG_MARKER" ]
+
+	XRAY_SERVICE_USER_CHANGED=""
+	write_xray_service_user_override
+	[ "$XRAY_SERVICE_USER_CHANGED" = "true" ]
+	grep -F '[Service]' "$XRAY_SERVICE_USER_OVERRIDE_FILE" >/dev/null
+	grep -F 'User=root' "$XRAY_SERVICE_USER_OVERRIDE_FILE" >/dev/null
+	XRAY_SERVICE_USER_CHANGED=""
+	write_xray_service_user_override
+	[ -z "$XRAY_SERVICE_USER_CHANGED" ]
 
 	printf '%s\n' '{"log":{"loglevel":"error"},"inbounds":[]}' \
 		> "$XRAY_CONFIG_FILE"

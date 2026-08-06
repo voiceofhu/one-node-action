@@ -11,6 +11,9 @@ initialize_xray_config() {
 	XRAY_MANAGED_CONFIG_MARKER="${XRAY_CONFIG_DIR}/.one-node-managed-config"
 	XRAY_SERVICE_NAME="xray.service"
 	XRAY_SERVICE_FILE="/etc/systemd/system/xray.service"
+	XRAY_SERVICE_OVERRIDE_DIR="${XRAY_SERVICE_FILE}.d"
+	XRAY_SERVICE_USER_OVERRIDE_FILE="${XRAY_SERVICE_OVERRIDE_DIR}/99-one-node-service-user.conf"
+	XRAY_SERVICE_USER_CHANGED=""
 	XRAY_CONFIG_OWNERSHIP=""
 }
 
@@ -65,6 +68,43 @@ xray_config_valid() {
 	[ -f "$xray_config_path" ] && [ ! -L "$xray_config_path" ] ||
 		return 1
 	"$XRAY_BINARY_HOST" -test -config "$xray_config_path" >/dev/null 2>&1
+}
+
+write_xray_service_user_override() {
+	install -d -m 0755 "$XRAY_SERVICE_OVERRIDE_DIR"
+	xray_service_user_source="${TEMP_DIR}/one-node-xray-service-user.conf"
+	cat > "$xray_service_user_source" <<'EOF'
+[Service]
+User=root
+EOF
+	chmod 0644 "$xray_service_user_source"
+
+	if [ -f "$XRAY_SERVICE_USER_OVERRIDE_FILE" ] &&
+		[ ! -L "$XRAY_SERVICE_USER_OVERRIDE_FILE" ] &&
+		[ "$(sha256sum "$xray_service_user_source" | awk '{ print $1 }')" = "$(sha256sum "$XRAY_SERVICE_USER_OVERRIDE_FILE" | awk '{ print $1 }')" ]; then
+		return
+	fi
+	if [ -e "$XRAY_SERVICE_USER_OVERRIDE_FILE" ] ||
+		[ -L "$XRAY_SERVICE_USER_OVERRIDE_FILE" ]; then
+		[ -f "$XRAY_SERVICE_USER_OVERRIDE_FILE" ] &&
+			[ ! -L "$XRAY_SERVICE_USER_OVERRIDE_FILE" ] ||
+			die "Xray service user override must be a regular file: $XRAY_SERVICE_USER_OVERRIDE_FILE"
+	fi
+
+	xray_service_user_target_tmp=$(mktemp "${XRAY_SERVICE_OVERRIDE_DIR}/.99-one-node-service-user.conf.XXXXXX")
+	install -m 0644 "$xray_service_user_source" "$xray_service_user_target_tmp"
+	mv -f "$xray_service_user_target_tmp" "$XRAY_SERVICE_USER_OVERRIDE_FILE"
+	XRAY_SERVICE_USER_CHANGED="true"
+	log "configured $XRAY_SERVICE_NAME to run as root so it can read protected TLS private keys"
+}
+
+ensure_xray_service_user() {
+	write_xray_service_user_override
+	systemctl daemon-reload
+	xray_service_user=$(systemctl show "$XRAY_SERVICE_NAME" --property=User --value) ||
+		die "failed to resolve the effective Xray service user"
+	[ "$xray_service_user" = "root" ] ||
+		die "effective Xray service user is ${xray_service_user:-empty}, expected root"
 }
 
 xray_config_is_official_placeholder() {
@@ -197,7 +237,10 @@ activate_xray_service() {
 }
 
 ensure_xray() {
-	if xray_installation_ready; then
+	if xray_artifacts_ready; then
+		ensure_xray_service_user
+	fi
+	if [ -z "$XRAY_SERVICE_USER_CHANGED" ] && xray_installation_ready; then
 		log "using existing Xray installation at $XRAY_BINARY_HOST"
 		return
 	fi
@@ -223,7 +266,7 @@ ensure_xray() {
 		chmod 0700 "$xray_installer"
 		bash -n "$xray_installer" ||
 			die "downloaded Xray installer has invalid syntax"
-		if ! bash "$xray_installer" install; then
+		if ! bash "$xray_installer" install -u root; then
 			# On a first install the upstream script creates config.json as `{}`.
 			# Xray validates that placeholder but exits because it has no
 			# listener, so some upstream revisions report a service-start
@@ -236,6 +279,7 @@ ensure_xray() {
 
 	xray_artifacts_ready ||
 		die "official Xray installer completed without the Xray binary and GeoData"
+	ensure_xray_service_user
 	prepare_xray_config
 	activate_xray_service
 	xray_installation_ready ||
