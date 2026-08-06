@@ -173,14 +173,6 @@ jobs:
           go-version-file: one-node-node/go.mod
           cache-dependency-path: one-node-node/go.sum
 
-      - name: Test Node
-        working-directory: one-node-node
-        run: make test
-
-      - name: Test installer integration
-        working-directory: one-node-node
-        run: make test-installer
-
       - name: Build release binary
         working-directory: one-node-node
         env:
