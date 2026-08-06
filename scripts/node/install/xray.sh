@@ -11,9 +11,14 @@ initialize_xray_config() {
 	XRAY_MANAGED_CONFIG_MARKER="${XRAY_CONFIG_DIR}/.one-node-managed-config"
 	XRAY_SERVICE_NAME="xray.service"
 	XRAY_SERVICE_FILE="/etc/systemd/system/xray.service"
+	XRAY_SERVICE_USER="one-node-xray"
+	XRAY_SERVICE_GROUP="one-node-xray"
 	XRAY_SERVICE_OVERRIDE_DIR="${XRAY_SERVICE_FILE}.d"
 	XRAY_SERVICE_USER_OVERRIDE_FILE="${XRAY_SERVICE_OVERRIDE_DIR}/99-one-node-service-user.conf"
 	XRAY_SERVICE_USER_CHANGED=""
+	XRAY_LOG_DIR="/var/log/xray"
+	XRAY_HYSTERIA_CONFIG_DIR="/etc/hysteria"
+	XRAY_HYSTERIA_PRIVATE_KEY="${XRAY_HYSTERIA_CONFIG_DIR}/private.key"
 	XRAY_CONFIG_OWNERSHIP=""
 }
 
@@ -70,12 +75,41 @@ xray_config_valid() {
 	"$XRAY_BINARY_HOST" -test -config "$xray_config_path" >/dev/null 2>&1
 }
 
+ensure_xray_service_account() {
+	if ! getent group "$XRAY_SERVICE_GROUP" >/dev/null 2>&1; then
+		groupadd --system "$XRAY_SERVICE_GROUP" ||
+			die "failed to create Xray service group $XRAY_SERVICE_GROUP"
+	fi
+	if ! id -u "$XRAY_SERVICE_USER" >/dev/null 2>&1; then
+		useradd --system --gid "$XRAY_SERVICE_GROUP" --no-create-home \
+			--home-dir /nonexistent --shell /usr/sbin/nologin \
+			"$XRAY_SERVICE_USER" ||
+			die "failed to create Xray service user $XRAY_SERVICE_USER"
+		log "created restricted Xray service account $XRAY_SERVICE_USER"
+	fi
+
+	xray_service_uid=$(id -u "$XRAY_SERVICE_USER") ||
+		die "failed to resolve Xray service user $XRAY_SERVICE_USER"
+	case "$xray_service_uid" in
+		''|*[!0-9]*) die "Xray service user has an invalid uid: $xray_service_uid" ;;
+	esac
+	[ "$xray_service_uid" -ne 0 ] ||
+		die "Xray service user must not use uid 0"
+	xray_service_gid=$(getent group "$XRAY_SERVICE_GROUP" | awk -F: '{ print $3 }')
+	case "$xray_service_gid" in
+		''|*[!0-9]*) die "Xray service group has an invalid gid: $xray_service_gid" ;;
+	esac
+	[ "$xray_service_gid" -ne 0 ] ||
+		die "Xray service group must not use gid 0"
+}
+
 write_xray_service_user_override() {
 	install -d -m 0755 "$XRAY_SERVICE_OVERRIDE_DIR"
 	xray_service_user_source="${TEMP_DIR}/one-node-xray-service-user.conf"
-	cat > "$xray_service_user_source" <<'EOF'
+	cat > "$xray_service_user_source" <<EOF
 [Service]
-User=root
+User=$XRAY_SERVICE_USER
+Group=$XRAY_SERVICE_GROUP
 EOF
 	chmod 0644 "$xray_service_user_source"
 
@@ -95,7 +129,7 @@ EOF
 	install -m 0644 "$xray_service_user_source" "$xray_service_user_target_tmp"
 	mv -f "$xray_service_user_target_tmp" "$XRAY_SERVICE_USER_OVERRIDE_FILE"
 	XRAY_SERVICE_USER_CHANGED="true"
-	log "configured $XRAY_SERVICE_NAME to run as root so it can read protected TLS private keys"
+	log "configured $XRAY_SERVICE_NAME to run as $XRAY_SERVICE_USER"
 }
 
 ensure_xray_service_user() {
@@ -103,8 +137,53 @@ ensure_xray_service_user() {
 	systemctl daemon-reload
 	xray_service_user=$(systemctl show "$XRAY_SERVICE_NAME" --property=User --value) ||
 		die "failed to resolve the effective Xray service user"
-	[ "$xray_service_user" = "root" ] ||
-		die "effective Xray service user is ${xray_service_user:-empty}, expected root"
+	[ "$xray_service_user" = "$XRAY_SERVICE_USER" ] ||
+		die "effective Xray service user is ${xray_service_user:-empty}, expected $XRAY_SERVICE_USER"
+	xray_service_group=$(systemctl show "$XRAY_SERVICE_NAME" --property=Group --value) ||
+		die "failed to resolve the effective Xray service group"
+	[ "$xray_service_group" = "$XRAY_SERVICE_GROUP" ] ||
+		die "effective Xray service group is ${xray_service_group:-empty}, expected $XRAY_SERVICE_GROUP"
+}
+
+grant_xray_group_file_access() {
+	xray_access_path=$1
+	xray_access_mode=$2
+	xray_access_description=$3
+	[ -e "$xray_access_path" ] || return
+	[ -f "$xray_access_path" ] && [ ! -L "$xray_access_path" ] ||
+		die "$xray_access_description must be a regular file: $xray_access_path"
+	chgrp "$XRAY_SERVICE_GROUP" "$xray_access_path" ||
+		die "failed to grant $XRAY_SERVICE_GROUP access to $xray_access_description"
+	chmod "$xray_access_mode" "$xray_access_path" ||
+		die "failed to set permissions on $xray_access_description"
+}
+
+grant_xray_group_directory_access() {
+	xray_access_dir=$1
+	xray_access_description=$2
+	[ -e "$xray_access_dir" ] || return
+	[ -d "$xray_access_dir" ] && [ ! -L "$xray_access_dir" ] ||
+		die "$xray_access_description must be a real directory: $xray_access_dir"
+	chgrp "$XRAY_SERVICE_GROUP" "$xray_access_dir" ||
+		die "failed to grant $XRAY_SERVICE_GROUP access to $xray_access_description"
+	chmod g+x "$xray_access_dir" ||
+		die "failed to grant directory traversal for $xray_access_description"
+}
+
+ensure_xray_runtime_file_access() {
+	grant_xray_group_directory_access "$XRAY_CONFIG_DIR" "Xray configuration directory"
+	grant_xray_group_file_access "$XRAY_CONFIG_FILE" 0640 "Xray configuration"
+	grant_xray_group_directory_access "$XRAY_LOG_DIR" "Xray log directory"
+	grant_xray_group_file_access "${XRAY_LOG_DIR}/access.log" 0660 "Xray access log"
+	grant_xray_group_file_access "${XRAY_LOG_DIR}/error.log" 0660 "Xray error log"
+
+	if [ -e "$XRAY_HYSTERIA_PRIVATE_KEY" ]; then
+		grant_xray_group_directory_access "$XRAY_HYSTERIA_CONFIG_DIR" \
+			"Hysteria configuration directory"
+		grant_xray_group_file_access "$XRAY_HYSTERIA_PRIVATE_KEY" 0640 \
+			"Hysteria private key"
+		log "granted $XRAY_SERVICE_USER read access to $XRAY_HYSTERIA_PRIVATE_KEY"
+	fi
 }
 
 xray_config_is_official_placeholder() {
@@ -237,6 +316,7 @@ activate_xray_service() {
 }
 
 ensure_xray() {
+	ensure_xray_service_account
 	if xray_artifacts_ready; then
 		ensure_xray_service_user
 	fi
@@ -266,7 +346,7 @@ ensure_xray() {
 		chmod 0700 "$xray_installer"
 		bash -n "$xray_installer" ||
 			die "downloaded Xray installer has invalid syntax"
-		if ! bash "$xray_installer" install -u root; then
+		if ! bash "$xray_installer" install -u "$XRAY_SERVICE_USER"; then
 			# On a first install the upstream script creates config.json as `{}`.
 			# Xray validates that placeholder but exits because it has no
 			# listener, so some upstream revisions report a service-start
@@ -281,6 +361,7 @@ ensure_xray() {
 		die "official Xray installer completed without the Xray binary and GeoData"
 	ensure_xray_service_user
 	prepare_xray_config
+	ensure_xray_runtime_file_access
 	activate_xray_service
 	xray_installation_ready ||
 		die "Xray installation did not become ready after service activation"

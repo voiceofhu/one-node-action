@@ -21,6 +21,14 @@ validate_install_host() {
 
 	command -v systemctl >/dev/null 2>&1 ||
 		die "systemd is required to install One Node and Xray"
+	command -v getent >/dev/null 2>&1 ||
+		die "getent is required to manage the Xray service account"
+	command -v groupadd >/dev/null 2>&1 ||
+		die "groupadd is required to manage the Xray service account"
+	command -v useradd >/dev/null 2>&1 ||
+		die "useradd is required to manage the Xray service account"
+	command -v chgrp >/dev/null 2>&1 ||
+		die "chgrp is required to grant Xray access to protected files"
 	command -v curl >/dev/null 2>&1 ||
 		die "curl is required to run this installer"
 	command -v sha256sum >/dev/null 2>&1 ||

@@ -32,7 +32,13 @@ grep -F 'https://github.com/XTLS/Xray-install/raw/main/install-release.sh' \
 grep -F 'bash "$xray_installer" install' \
 	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
 # shellcheck disable=SC2016
-grep -F 'bash "$xray_installer" install -u root' \
+grep -F 'bash "$xray_installer" install -u "$XRAY_SERVICE_USER"' \
+	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
+# shellcheck disable=SC2016
+grep -F 'groupadd --system "$XRAY_SERVICE_GROUP"' \
+	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
+# shellcheck disable=SC2016
+grep -F 'useradd --system --gid "$XRAY_SERVICE_GROUP"' \
 	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
 # The literal installer variable proves the uninstaller delegates to XTLS.
 # shellcheck disable=SC2016
@@ -198,8 +204,14 @@ chmod 0755 "$TEST_TEMP_DIR/xray-bin/xray"
 	XRAY_CONFIG_FILE="${XRAY_CONFIG_DIR}/config.json"
 	XRAY_GEODATA_DIR="$TEST_TEMP_DIR/xray-geodata"
 	XRAY_SERVICE_FILE="$TEST_TEMP_DIR/xray.service"
+	# shellcheck disable=SC2034
+	XRAY_SERVICE_USER="one-node-xray"
+	XRAY_SERVICE_GROUP="one-node-xray"
 	XRAY_SERVICE_OVERRIDE_DIR="${XRAY_SERVICE_FILE}.d"
 	XRAY_SERVICE_USER_OVERRIDE_FILE="${XRAY_SERVICE_OVERRIDE_DIR}/99-one-node-service-user.conf"
+	XRAY_LOG_DIR="$TEST_TEMP_DIR/xray-log"
+	XRAY_HYSTERIA_CONFIG_DIR="$TEST_TEMP_DIR/hysteria"
+	XRAY_HYSTERIA_PRIVATE_KEY="${XRAY_HYSTERIA_CONFIG_DIR}/private.key"
 	XRAY_MANAGED_CONFIG_MARKER="${XRAY_CONFIG_DIR}/.one-node-managed-config"
 	PATH="$TEST_TEMP_DIR/xray-bin:$PATH"
 	export PATH XRAY_GEODATA_DIR XRAY_SERVICE_FILE
@@ -219,10 +231,29 @@ chmod 0755 "$TEST_TEMP_DIR/xray-bin/xray"
 	write_xray_service_user_override
 	[ "$XRAY_SERVICE_USER_CHANGED" = "true" ]
 	grep -F '[Service]' "$XRAY_SERVICE_USER_OVERRIDE_FILE" >/dev/null
-	grep -F 'User=root' "$XRAY_SERVICE_USER_OVERRIDE_FILE" >/dev/null
+	grep -F "User=$XRAY_SERVICE_USER" "$XRAY_SERVICE_USER_OVERRIDE_FILE" >/dev/null
+	grep -F "Group=$XRAY_SERVICE_GROUP" "$XRAY_SERVICE_USER_OVERRIDE_FILE" >/dev/null
 	XRAY_SERVICE_USER_CHANGED=""
 	write_xray_service_user_override
 	[ -z "$XRAY_SERVICE_USER_CHANGED" ]
+
+	install -d -m 0700 "$XRAY_LOG_DIR" "$XRAY_HYSTERIA_CONFIG_DIR"
+	printf '%s\n' 'access' > "$XRAY_LOG_DIR/access.log"
+	printf '%s\n' 'error' > "$XRAY_LOG_DIR/error.log"
+	printf '%s\n' 'private' > "$XRAY_HYSTERIA_PRIVATE_KEY"
+	chmod 0600 "$XRAY_CONFIG_FILE" "$XRAY_LOG_DIR/access.log" \
+		"$XRAY_LOG_DIR/error.log" "$XRAY_HYSTERIA_PRIVATE_KEY"
+	# shellcheck disable=SC2034
+	XRAY_SERVICE_GROUP=$(id -gn)
+	ensure_xray_runtime_file_access
+	file_mode() {
+		stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+	}
+	[ "$(file_mode "$XRAY_CONFIG_FILE")" = "640" ]
+	[ "$(file_mode "$XRAY_LOG_DIR/access.log")" = "660" ]
+	[ "$(file_mode "$XRAY_LOG_DIR/error.log")" = "660" ]
+	[ "$(file_mode "$XRAY_HYSTERIA_CONFIG_DIR")" = "710" ]
+	[ "$(file_mode "$XRAY_HYSTERIA_PRIVATE_KEY")" = "640" ]
 
 	printf '%s\n' '{"log":{"loglevel":"error"},"inbounds":[]}' \
 		> "$XRAY_CONFIG_FILE"
