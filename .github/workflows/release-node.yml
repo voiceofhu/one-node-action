@@ -23,6 +23,7 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   NODE_REPOSITORY: voiceofhu/one-node-node
+  SERVER_REPOSITORY: voiceofhu/one-node-server
   NODE_IMAGE_NAME: voiceofhu/one-node-node
   RELEASE_REPOSITORY: voiceofhu/one-node-action
 
@@ -177,6 +178,26 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Read canonical Server commit
+        id: protocol
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          server_commit=$(jq -er '.server_commit | select(test("^[0-9a-f]{40}$"))' \
+            one-node-node/one/control/proto-source.json)
+          echo "server_commit=$server_commit" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout canonical Server protocol source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SERVER_REPOSITORY }}
+          ref: ${{ steps.protocol.outputs.server_commit }}
+          path: one-node-server
+          token: ${{ secrets.GH_TOKEN }}
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Checkout public Action
         uses: actions/checkout@v4
         with:
@@ -210,7 +231,15 @@ jobs:
         working-directory: one-node-node
         run: make test-installer ONE_NODE_ACTION_DIR=../one-node-action
 
-      - name: Validate current public installer contract
+      - name: Set up Server Go for protocol generation
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: one-node-server/go.mod
+          cache-dependency-path: |
+            one-node-server/go.sum
+            one-node-node/go.sum
+
+      - name: Validate public installer and typed control contracts
         working-directory: one-node-action
         run: make check
 

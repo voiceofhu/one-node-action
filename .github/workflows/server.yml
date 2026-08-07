@@ -27,6 +27,7 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   SERVER_REPOSITORY: voiceofhu/one-node-server
+  NODE_REPOSITORY: voiceofhu/one-node-node
   WEB_REPOSITORY: voiceofhu/one-node-web
   IMAGE_NAME: voiceofhu/one-node-server
 
@@ -122,11 +123,92 @@ jobs:
           include-hidden-files: true
           retention-days: 1
 
+  protocol_contract:
+    name: Verify typed control contract
+    needs: resolve
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Node contract consumer
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.NODE_REPOSITORY }}
+          ref: main
+          path: node
+          token: ${{ secrets.GH_TOKEN }}
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Read canonical Server commit
+        id: protocol
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          server_commit=$(jq -er '.server_commit | select(test("^[0-9a-f]{40}$"))' \
+            node/one/control/proto-source.json)
+          echo "server_commit=$server_commit" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout canonical Server protocol source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SERVER_REPOSITORY }}
+          ref: ${{ steps.protocol.outputs.server_commit }}
+          path: server
+          token: ${{ secrets.GH_TOKEN }}
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout deploy Server source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SERVER_REPOSITORY }}
+          ref: ${{ needs.resolve.outputs.server_sha }}
+          path: server-current
+          token: ${{ secrets.GH_TOKEN }}
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout public Action
+        uses: actions/checkout@v4
+        with:
+          path: action
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: |
+            server/go.sum
+            node/go.sum
+
+      - name: Verify generated bindings and targeted control tests
+        working-directory: action
+        env:
+          ONE_NODE_SERVER_DIR: ../server
+          ONE_NODE_NODE_DIR: ../node
+        run: make proto-contract
+
+      - name: Verify deploy source uses the canonical protocol
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cmp server/api/node_control.proto server-current/api/node_control.proto
+          cmp server/api/gen/go/control/v2/node_control.pb.go \
+            server-current/api/gen/go/control/v2/node_control.pb.go
+          (cd server-current && go test -mod=readonly -count=1 ./internal/nodecontrol)
+
   build:
     name: Build and push linux/${{ matrix.suffix }} image
     needs:
       - resolve
       - frontend
+      - protocol_contract
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
