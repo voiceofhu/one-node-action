@@ -69,7 +69,7 @@ load_upgrade_manifest() {
 	IDENTITY_FILE="${ONE_NODE_STATE_DIR}/node-secret"
 	RUNTIME_STATE_FILE="${ONE_NODE_STATE_DIR}/runtime-active.json"
 	[ -f "$ENV_FILE" ] && [ ! -L "$ENV_FILE" ] || die "One Node environment file is missing or unsafe"
-	[ "$(stat -c '%a' "$ENV_FILE")" = "600" ] || die "One Node environment file permissions must be 0600"
+	[ "$(file_mode "$ENV_FILE")" = "600" ] || die "One Node environment file permissions must be 0600"
 	ONE_NODE_ID=$(sed -n 's/^NODE_NODE_ID="\([0-9][0-9]*\)"$/\1/p' "$ENV_FILE")
 	case "$ONE_NODE_ID" in
 	''|*[!0-9]*|0) die "One Node environment has an invalid node id" ;;

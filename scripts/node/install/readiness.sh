@@ -28,7 +28,7 @@ readiness_failure() {
 
 identity_is_active() {
 	[ -f "$IDENTITY_FILE" ] && [ ! -L "$IDENTITY_FILE" ] || return 1
-	[ "$(stat -c '%a' "$IDENTITY_FILE")" = "600" ] || return 1
+	[ "$(file_mode "$IDENTITY_FILE")" = "600" ] || return 1
 	grep -Eq '"node_id"[[:space:]]*:[[:space:]]*"'"$ONE_NODE_ID"'"' "$IDENTITY_FILE" || return 1
 	grep -Eq '"state"[[:space:]]*:[[:space:]]*"active"' "$IDENTITY_FILE"
 }
@@ -37,7 +37,7 @@ runtime_revision() {
 	section=$1
 	[ -e "$RUNTIME_STATE_FILE" ] || return 1
 	[ -f "$RUNTIME_STATE_FILE" ] && [ ! -L "$RUNTIME_STATE_FILE" ] || return 1
-	[ "$(stat -c '%a' "$RUNTIME_STATE_FILE")" = "600" ] || return 1
+	[ "$(file_mode "$RUNTIME_STATE_FILE")" = "600" ] || return 1
 	awk -v section="$section" '
 		$0 ~ "\\\"" section "\\\"[[:space:]]*:" { inside = 1; next }
 		inside && match($0, /"revision"[[:space:]]*:[[:space:]]*"[0-9]+"/) {

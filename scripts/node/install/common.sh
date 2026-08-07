@@ -9,6 +9,10 @@ die() {
 	exit 1
 }
 
+file_mode() {
+	stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+}
+
 show_help() {
 	printf '%s\n' \
 		"Install the One Node sing-box data plane." \

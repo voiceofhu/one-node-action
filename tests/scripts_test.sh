@@ -6,7 +6,7 @@ TEST_TEMP_DIR=$(mktemp -d)
 trap 'rm -rf -- "$TEST_TEMP_DIR"' EXIT HUP INT TERM
 
 INSTALL_MODULES="install/common.sh shared/manifest.sh install/config.sh install/host.sh install/files.sh install/native.sh install/docker.sh install/readiness.sh install/main.sh"
-UNINSTALL_MODULES="uninstall/common.sh shared/manifest.sh uninstall/paths.sh uninstall/native.sh uninstall/docker.sh uninstall/main.sh"
+UNINSTALL_MODULES="install/common.sh uninstall/common.sh shared/manifest.sh uninstall/paths.sh uninstall/native.sh uninstall/docker.sh uninstall/main.sh"
 UPGRADE_MODULES="install/common.sh shared/manifest.sh install/host.sh install/files.sh install/docker.sh install/readiness.sh upgrade/common.sh upgrade/manifest.sh upgrade/native.sh upgrade/docker.sh upgrade/rollback.sh upgrade/main.sh"
 
 for entrypoint in install.sh uninstall.sh upgrade.sh; do
@@ -15,6 +15,14 @@ done
 for module in $(printf '%s\n' "$INSTALL_MODULES $UNINSTALL_MODULES $UPGRADE_MODULES" | tr ' ' '\n' | sort -u); do
 	sh -n "$ROOT_DIR/scripts/node/$module"
 done
+
+# The permission reader supports the host's GNU or BSD stat variant.
+# shellcheck disable=SC1090
+. "$ROOT_DIR/scripts/node/install/common.sh"
+mode_fixture="$TEST_TEMP_DIR/mode-fixture"
+: >"$mode_fixture"
+chmod 0600 "$mode_fixture"
+[ "$(file_mode "$mode_fixture")" = "600" ]
 
 for removed in install-v2.sh uninstall-v2.sh upgrade-v2.sh scripts/node-v2; do
 	[ ! -e "$ROOT_DIR/$removed" ] || {

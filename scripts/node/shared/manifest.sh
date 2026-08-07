@@ -218,7 +218,7 @@ manifest_load() {
 	manifest_load_file=$1
 	[ -f "$manifest_load_file" ] && [ ! -L "$manifest_load_file" ] ||
 		manifest_fail "installation manifest must be a regular file" || return 1
-	[ "$(stat -c '%a' "$manifest_load_file")" = "600" ] ||
+	[ "$(file_mode "$manifest_load_file")" = "600" ] ||
 		manifest_fail "installation manifest permissions must be 0600" || return 1
 	manifest_reset
 	while IFS= read -r manifest_line || [ -n "$manifest_line" ]; do
