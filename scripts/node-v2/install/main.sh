@@ -1,0 +1,37 @@
+#!/bin/sh
+
+if ! command -v initialize_install_config >/dev/null 2>&1; then
+	printf '%s\n' \
+		"[one-node-node] error: installer main module must be loaded through install-v2.sh" >&2
+	exit 1
+fi
+
+main() {
+	umask 077
+	initialize_install_config
+	parse_install_arguments "$@"
+	validate_install_host
+	validate_install_config
+	validate_install_target
+	initialize_install_workspace
+
+	if [ "$INSTALL_MODE" = "native" ]; then
+		prepare_native_binary
+		write_native_source
+	else
+		prepare_docker_image
+		write_docker_source
+	fi
+	write_common_sources
+	prepare_install_directories
+	install_common_files
+	if [ "$INSTALL_MODE" = "native" ]; then
+		install_native_runtime
+	else
+		install_docker_runtime
+	fi
+	wait_for_ready_heartbeat
+
+	INSTALL_COMMITTED="true"
+	log "${INSTALL_MODE} sing-box installation is ready at config revision ${ONE_NODE_EXPECTED_CONFIG_REVISION} and bindings revision ${ONE_NODE_EXPECTED_BINDINGS_REVISION}"
+}

@@ -203,6 +203,13 @@ jobs:
         working-directory: one-node-node
         run: make test-e2e
 
+      - name: Set up QEMU for installer architecture contracts
+        uses: docker/setup-qemu-action@v3
+
+      - name: Run native and Docker installer contracts
+        working-directory: one-node-node
+        run: make test-installer ONE_NODE_ACTION_DIR=../one-node-action
+
       - name: Validate current public installer contract
         working-directory: one-node-action
         run: make check
