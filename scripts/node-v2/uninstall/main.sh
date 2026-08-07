@@ -18,12 +18,17 @@ main() {
 	if ! load_v2_installation; then
 		return 0
 	fi
+	preflight_owned_paths
 
 	if [ "$installed_mode" = "native" ]; then
 		uninstall_native
 	else
 		uninstall_docker
 	fi
-	remove_v2_files
-	log "One Node sing-box runtime was uninstalled; state retained at ${state_dir}"
+	remove_owned_files
+	if manifest_has_owned_path "$state_dir"; then
+		log "One Node sing-box runtime and installer-owned state were removed"
+	else
+		log "One Node sing-box runtime was uninstalled; pre-existing state retained at ${state_dir}"
+	fi
 }

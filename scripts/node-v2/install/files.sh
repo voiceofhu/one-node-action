@@ -16,6 +16,7 @@ initialize_install_workspace() {
 	RUNTIME_STATE_FILE="${ONE_NODE_STATE_DIR}/runtime-active.json"
 	INSTALL_STARTED="false"
 	INSTALL_COMMITTED="false"
+	STATE_DIR_CREATED="false"
 	trap on_install_exit EXIT
 	trap 'exit 1' HUP INT TERM
 }
@@ -36,6 +37,9 @@ on_install_exit() {
 			fi
 		fi
 		rm -f -- "$BINARY_FILE" "$ENV_FILE" "$COMPOSE_FILE" "$INSTALL_RECORD"
+		if [ "$STATE_DIR_CREATED" = "true" ]; then
+			rmdir -- "$ONE_NODE_STATE_DIR" 2>/dev/null || true
+		fi
 		set -e
 		log "installation did not become ready; credential state was preserved for a safe retry"
 	fi
@@ -69,15 +73,33 @@ write_common_sources() {
 	write_env "CONTROL_BOOTSTRAP_ENV_FILE" "$ENV_FILE"
 	write_env "LOG_LEVEL" "info"
 
-	printf '%s\n' \
-		"format=v2" \
-		"runtime=${INSTALL_MODE}" \
-		"state_dir=${ONE_NODE_STATE_DIR}" \
-		"version=${ONE_NODE_VERSION}" \
-		"architecture=${ONE_NODE_ARCH}" \
-		"image=${ONE_NODE_DOCKER_IMAGE}" \
-		>"$RECORD_SOURCE"
-	chmod 0600 "$RECORD_SOURCE"
+	manifest_reset
+	MANIFEST_FORMAT=$MANIFEST_FORMAT_V1
+	MANIFEST_MODE=$INSTALL_MODE
+	MANIFEST_STATE_DIR=$ONE_NODE_STATE_DIR
+	MANIFEST_DESIRED_CONFIG_REVISION=$ONE_NODE_EXPECTED_CONFIG_REVISION
+	MANIFEST_DESIRED_BINDINGS_REVISION=$ONE_NODE_EXPECTED_BINDINGS_REVISION
+	MANIFEST_CURRENT_VERSION=$ONE_NODE_VERSION
+	if [ "$INSTALL_MODE" = "native" ]; then
+		MANIFEST_CURRENT_BINARY_PATH=$MANIFEST_BINARY_PATH
+		MANIFEST_CURRENT_BINARY_SHA256=$ONE_NODE_BINARY_SHA256
+	else
+		MANIFEST_CURRENT_IMAGE=$ONE_NODE_DOCKER_IMAGE
+	fi
+	manifest_append_owned_path "$MANIFEST_INSTALL_DIR"
+	manifest_append_owned_path "$MANIFEST_ENV_PATH"
+	manifest_append_owned_path "$MANIFEST_RECORD_PATH"
+	if [ "$STATE_DIR_CREATED" = "true" ]; then
+		manifest_append_owned_path "$MANIFEST_STATE_DIR"
+	fi
+	if [ "$INSTALL_MODE" = "native" ]; then
+		manifest_append_owned_path "$MANIFEST_BINARY_PATH"
+		manifest_append_owned_path "$MANIFEST_UNIT_PATH"
+	else
+		manifest_append_owned_path "$MANIFEST_COMPOSE_PATH"
+	fi
+	MANIFEST_OWNED_COUNT=$(printf '%s\n' "$MANIFEST_OWNED_PATHS" | awk 'NF { count++ } END { print count + 0 }')
+	manifest_write "$RECORD_SOURCE" || die "unable to write the installation manifest"
 }
 
 prepare_install_directories() {
@@ -88,6 +110,7 @@ prepare_install_directories() {
 		chmod 0700 "$ONE_NODE_STATE_DIR"
 	else
 		install -d -m 0700 "$ONE_NODE_STATE_DIR"
+		STATE_DIR_CREATED="true"
 	fi
 }
 

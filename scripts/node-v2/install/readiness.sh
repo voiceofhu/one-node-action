@@ -18,6 +18,14 @@ print_runtime_logs() {
 	fi
 }
 
+readiness_failure() {
+	if [ "${ONE_NODE_READINESS_RETURN_ONLY:-false}" = "true" ]; then
+		printf '%s\n' "[one-node-node] error: $*" >&2
+		return 1
+	fi
+	die "$*"
+}
+
 identity_is_active() {
 	[ -f "$IDENTITY_FILE" ] && [ ! -L "$IDENTITY_FILE" ] || return 1
 	[ "$(stat -c '%a' "$IDENTITY_FILE")" = "600" ] || return 1
@@ -60,7 +68,8 @@ wait_for_ready_heartbeat() {
 	while [ "$remaining" -gt 0 ]; do
 		if ! runtime_is_active; then
 			print_runtime_logs
-			die "${INSTALL_MODE} runtime stopped before enrollment became ready"
+			readiness_failure "${INSTALL_MODE} runtime stopped before enrollment became ready"
+			return 1
 		fi
 		if identity_is_active && runtime_revisions_are_ready &&
 			! grep -Eq '^[[:space:]]*(export[[:space:]]+)?CONTROL_BOOTSTRAP_TOKEN[[:space:]]*=' "$ENV_FILE"; then
@@ -70,5 +79,5 @@ wait_for_ready_heartbeat() {
 		remaining=$((remaining - 1))
 	done
 	print_runtime_logs
-	die "Server did not accept a sing_box heartbeat at the expected config and binding revisions"
+	readiness_failure "Server did not accept a sing_box heartbeat at the expected config and binding revisions"
 }

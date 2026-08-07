@@ -100,12 +100,8 @@ validate_install_config() {
 	esac
 	ONE_NODE_STATE_DIR=$(realpath -m -- "$ONE_NODE_STATE_DIR")
 	case "$ONE_NODE_STATE_DIR" in
-	*[!A-Za-z0-9_./-]*) die "ONE_NODE_STATE_DIR contains unsupported characters" ;;
-	esac
-	case "$ONE_NODE_STATE_DIR" in
-	/|/bin|/boot|/dev|/etc|/home|/lib|/lib32|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var|"$INSTALL_DIR")
-		die "ONE_NODE_STATE_DIR must be a dedicated subdirectory"
-		;;
+	/var/lib/one-node-node|/var/lib/one-node-node/*) ;;
+	*) die "ONE_NODE_STATE_DIR must remain under /var/lib/one-node-node" ;;
 	esac
 
 	if [ "$INSTALL_MODE" = "native" ]; then

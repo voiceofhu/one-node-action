@@ -6,7 +6,7 @@
 set -eu
 umask 077
 
-ONE_NODE_V2_UNINSTALL_MODULES="common.sh native.sh docker.sh main.sh"
+ONE_NODE_V2_UNINSTALL_MODULES="uninstall/common.sh shared/manifest.sh uninstall/paths.sh uninstall/native.sh uninstall/docker.sh uninstall/main.sh"
 ONE_NODE_V2_ENTRYPOINT_TEMP_DIR=""
 
 entrypoint_die() {
@@ -26,8 +26,8 @@ entrypoint_local_source_dir() {
 	esac
 	entrypoint_dir=$(CDPATH='' cd -- "$(dirname "$0")" 2>/dev/null && pwd) ||
 		return 1
-	source_dir="${entrypoint_dir}/scripts/node-v2/uninstall"
-	[ -f "${source_dir}/main.sh" ] && [ ! -L "${source_dir}/main.sh" ] ||
+	source_dir="${entrypoint_dir}/scripts/node-v2"
+	[ -f "${source_dir}/uninstall/main.sh" ] && [ ! -L "${source_dir}/uninstall/main.sh" ] ||
 		return 1
 	printf '%s\n' "$source_dir"
 }
@@ -38,8 +38,7 @@ entrypoint_module_base_url() {
 		entrypoint_die "ONE_NODE_SCRIPT_BASE_URL must pin the uninstaller modules"
 	base_url=${base_url%/}
 	case "$base_url" in
-	*/scripts/node-v2) base_url="${base_url}/uninstall" ;;
-	*/scripts/node-v2/uninstall) ;;
+	*/scripts/node-v2) ;;
 	*) entrypoint_die "ONE_NODE_SCRIPT_BASE_URL must end in scripts/node-v2" ;;
 	esac
 	case "$base_url" in
@@ -63,6 +62,8 @@ entrypoint_download_modules() {
 	*) protocols='=http,https' ;;
 	esac
 	for module in $ONE_NODE_V2_UNINSTALL_MODULES; do
+		module_dir=${module%/*}
+		install -d -m 0700 "${destination}/${module_dir}"
 		curl -q --proto "$protocols" --proto-redir "$protocols" --tlsv1.2 \
 			--fail --silent --show-error --no-location \
 			--connect-timeout 10 --max-time 30 --max-filesize 1048576 \

@@ -22,8 +22,8 @@ main() {
 		prepare_docker_image
 		write_docker_source
 	fi
-	write_common_sources
 	prepare_install_directories
+	write_common_sources
 	install_common_files
 	if [ "$INSTALL_MODE" = "native" ]; then
 		install_native_runtime
