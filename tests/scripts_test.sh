@@ -24,6 +24,16 @@ mode_fixture="$TEST_TEMP_DIR/mode-fixture"
 chmod 0600 "$mode_fixture"
 [ "$(file_mode "$mode_fixture")" = "600" ]
 
+canonical_fixture="$TEST_TEMP_DIR/not-created/child"
+[ "$(canonical_path "$canonical_fixture")" = "$canonical_fixture" ]
+[ "$(canonical_path "$TEST_TEMP_DIR/./child")" = "$TEST_TEMP_DIR/child" ]
+for unsafe_path in relative/path "$TEST_TEMP_DIR//child" "$TEST_TEMP_DIR/../child"; do
+	if canonical_path "$unsafe_path" >/dev/null; then
+		printf '%s\n' "unsafe path was accepted: $unsafe_path" >&2
+		exit 1
+	fi
+done
+
 for removed in install-v2.sh uninstall-v2.sh upgrade-v2.sh scripts/node-v2; do
 	[ ! -e "$ROOT_DIR/$removed" ] || {
 		printf '%s\n' "obsolete installer path remains: $removed" >&2

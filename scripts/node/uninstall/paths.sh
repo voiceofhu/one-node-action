@@ -16,7 +16,7 @@ uninstall_path_kind() {
 
 preflight_owned_path() {
 	owned_path=$1
-	[ "$(realpath -m -- "$owned_path")" = "$owned_path" ] ||
+	[ "$(canonical_path "$owned_path")" = "$owned_path" ] ||
 		die "manifest path is not canonical: $owned_path"
 	owned_kind=$(uninstall_path_kind "$owned_path") ||
 		die "manifest path is outside the One Node allowlist: $owned_path"

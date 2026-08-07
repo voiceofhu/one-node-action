@@ -61,7 +61,6 @@ parse_upgrade_arguments() {
 }
 
 load_upgrade_manifest() {
-	command -v realpath >/dev/null 2>&1 || die "realpath is required (install coreutils)"
 	command -v stat >/dev/null 2>&1 || die "stat is required (install coreutils)"
 	manifest_load "$INSTALL_RECORD" || die "refusing unknown or unsafe installation manifest"
 	INSTALL_MODE=$MANIFEST_MODE
@@ -78,7 +77,6 @@ load_upgrade_manifest() {
 
 validate_upgrade_host() {
 	[ "$(id -u)" -eq 0 ] || die "run this upgrade as root"
-	command -v realpath >/dev/null 2>&1 || die "realpath is required (install coreutils)"
 	command -v stat >/dev/null 2>&1 || die "stat is required (install coreutils)"
 	command -v sync >/dev/null 2>&1 || die "sync is required (install coreutils)"
 	case "$INSTALL_MODE" in

@@ -11,8 +11,6 @@ main() {
 	initialize_uninstall_config
 	parse_uninstall_arguments "$@"
 	[ "$(id -u)" -eq 0 ] || die "run this uninstaller as root"
-	command -v realpath >/dev/null 2>&1 ||
-		die "realpath is required (install coreutils)"
 	command -v stat >/dev/null 2>&1 ||
 		die "stat is required (install coreutils)"
 	if ! load_installation; then

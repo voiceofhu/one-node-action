@@ -62,7 +62,7 @@ manifest_validate_state_dir() {
 	/var/lib/one-node-node|/var/lib/one-node-node/*) ;;
 	*) return 1 ;;
 	esac
-	[ "$(realpath -m -- "$manifest_state_dir")" = "$manifest_state_dir" ]
+	[ "$(canonical_path "$manifest_state_dir")" = "$manifest_state_dir" ]
 }
 
 manifest_append_owned_path() {

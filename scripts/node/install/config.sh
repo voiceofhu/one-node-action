@@ -94,11 +94,8 @@ validate_install_config() {
 		;;
 	*) die "ONE_NODE_SERVER is invalid" ;;
 	esac
-	case "$ONE_NODE_STATE_DIR" in
-	/*) ;;
-	*) die "ONE_NODE_STATE_DIR must be absolute" ;;
-	esac
-	ONE_NODE_STATE_DIR=$(realpath -m -- "$ONE_NODE_STATE_DIR")
+	ONE_NODE_STATE_DIR=$(canonical_path "$ONE_NODE_STATE_DIR") ||
+		die "ONE_NODE_STATE_DIR must be a canonical absolute path"
 	case "$ONE_NODE_STATE_DIR" in
 	/var/lib/one-node-node|/var/lib/one-node-node/*) ;;
 	*) die "ONE_NODE_STATE_DIR must remain under /var/lib/one-node-node" ;;

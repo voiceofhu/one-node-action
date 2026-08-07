@@ -13,6 +13,48 @@ file_mode() {
 	stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
 }
 
+canonical_path() {
+	canonical_input=$1
+	case "$canonical_input" in
+	/*) ;;
+	*) return 1 ;;
+	esac
+	case "$canonical_input" in
+	*'//'*) return 1 ;;
+	*'
+'*|*''*) return 1 ;;
+	esac
+	case "/${canonical_input#/}/" in
+	*'/../'*) return 1 ;;
+	esac
+
+	if command -v realpath >/dev/null 2>&1; then
+		canonical_result=$(realpath -m -- "$canonical_input" 2>/dev/null) && {
+			printf '%s\n' "$canonical_result"
+			return 0
+		}
+	fi
+
+	canonical_rest=${canonical_input#/}
+	canonical_result=""
+	while [ -n "$canonical_rest" ]; do
+		case "$canonical_rest" in
+		*/*)
+			canonical_part=${canonical_rest%%/*}
+			canonical_rest=${canonical_rest#*/}
+			;;
+		*)
+			canonical_part=$canonical_rest
+			canonical_rest=""
+			;;
+		esac
+		[ "$canonical_part" = "." ] && continue
+		canonical_result="${canonical_result}/${canonical_part}"
+	done
+	[ -n "$canonical_result" ] || canonical_result=/
+	printf '%s\n' "$canonical_result"
+}
+
 show_help() {
 	printf '%s\n' \
 		"Install the One Node sing-box data plane." \

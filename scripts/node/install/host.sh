@@ -9,7 +9,6 @@ validate_install_host() {
 	[ "${ID:-}" = "debian" ] || die "only Debian is supported"
 	command -v dpkg >/dev/null 2>&1 || die "dpkg is required"
 	command -v curl >/dev/null 2>&1 || die "curl is required"
-	command -v realpath >/dev/null 2>&1 || die "realpath is required (install coreutils)"
 	command -v stat >/dev/null 2>&1 || die "stat is required (install coreutils)"
 	command -v awk >/dev/null 2>&1 || die "awk is required"
 
