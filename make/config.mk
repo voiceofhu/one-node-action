@@ -11,6 +11,7 @@ NODE_REPOSITORY ?= voiceofhu/one-node-node
 NODE_DIR ?= $(abspath $(PROJECT_ROOT)/../one-node-node)
 NODE_BRANCH ?= main
 NODE_REMOTE ?= origin
+NODE_RC ?= 1
 SERVER_REPOSITORY ?= voiceofhu/one-node-server
 SERVER_REF ?= main
 WEB_REPOSITORY ?= voiceofhu/one-node-web

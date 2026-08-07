@@ -11,6 +11,7 @@ deploy-node:
 	@set -euo pipefail; \
 	input_tag="$(TAG)"; \
 	input_version="$(VERSION)"; \
+	node_rc="$(NODE_RC)"; \
 	node_dir="$(NODE_DIR)"; \
 	if [ -n "$$input_tag" ]; then \
 		version="$${input_tag#node-v}"; \
@@ -21,12 +22,16 @@ deploy-node:
 		version="$${generated_tag#v}"; \
 	fi; \
 	version="$${version#v}"; \
-	[[ "$$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$$ ]] || { \
+	[[ "$$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$$ ]] || { \
 		echo "Generated VERSION must be semantic, for example 26.726.1530" >&2; \
 		exit 1; \
 	}; \
+	[[ "$$node_rc" =~ ^[1-9][0-9]*$$ ]] || { \
+		echo "NODE_RC must be a positive integer" >&2; \
+		exit 1; \
+	}; \
 	source_tag="v$$version"; \
-	release_tag="node-v$$version"; \
+	release_tag="node-rc-v$$version-rc.$$node_rc"; \
 	node_branch="$(NODE_BRANCH)"; \
 	node_remote="$(NODE_REMOTE)"; \
 	[ -d "$$node_dir/.git" ] || { \
@@ -116,8 +121,8 @@ deploy-node:
 			"refs/tags/$$source_tag"; \
 	fi; \
 	payload=$$(printf \
-		'{"ref":"%s","inputs":{"node_ref":"%s","version_tag":"v%s"}}' \
-		"$(ACTION_REF)" "$$source_tag" "$$version"); \
+		'{"ref":"%s","inputs":{"node_ref":"%s","version_tag":"%s"}}' \
+		"$(ACTION_REF)" "$$source_tag" "$$release_tag"); \
 	$(CURL) --fail --silent --show-error \
 		--request POST \
 		--header "Authorization: Bearer $$api_token" \

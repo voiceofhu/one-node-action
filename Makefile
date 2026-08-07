@@ -24,7 +24,7 @@ help:
 		"  check                     校验公开入口、实现脚本和基础行为" \
 		"" \
 		"发布:" \
-		"  deploy-node               生成时间版本、提交并推送标签，再触发 Release workflow" \
+		"  deploy-node               生成时间版本、提交并推送标签，再触发 Node RC workflow" \
 		"  deploy-server             构建版本化 Server 镜像并部署到生产服务器" \
 		"" \
 		"常用变量:" \
@@ -33,6 +33,7 @@ help:
 		"  NODE_DIR                  Node 本地仓库，默认 $(NODE_DIR)" \
 		"  NODE_BRANCH               Node 发布分支，默认 $(NODE_BRANCH)" \
 		"  NODE_REMOTE               Node 推送远端，默认 $(NODE_REMOTE)" \
+		"  NODE_RC=1                 Node RC 序号，默认 $(NODE_RC)" \
 		"  SERVER_REF                Server 构建 ref，默认 $(SERVER_REF)" \
 		"  WEB_REF                   Web 构建 ref，默认 $(WEB_REF)" \
 		"  ACTION_REF=main           Action workflow 分支，默认 $(ACTION_REF)" \
@@ -42,6 +43,6 @@ help:
 		"示例:" \
 		"  make check" \
 		"  make deploy-node DRY_RUN=true" \
-		"  make deploy-node" \
+		"  make deploy-node NODE_RC=1" \
 		"  make deploy-server DRY_RUN=true" \
 		"  make deploy-server"
