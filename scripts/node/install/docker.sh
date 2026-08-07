@@ -1,65 +1,63 @@
 #!/bin/sh
 
-# Docker/Compose preparation, source generation, state capture, and activation.
-# Installer globals are shared across sourced modules.
-# shellcheck disable=SC2034
-
 ensure_docker() {
 	if ! command -v docker >/dev/null 2>&1; then
-		command -v apt-get >/dev/null 2>&1 ||
-			die "Docker is required for Docker installation"
-		log "installing Docker Engine and Compose"
+		command -v apt-get >/dev/null 2>&1 || die "Docker is required"
+		log "installing Debian Docker Engine and Compose"
 		apt-get update
 		env DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io
 		if ! env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-v2; then
 			env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin
 		fi
 	fi
-	systemctl enable --now docker.service
+	if command -v systemctl >/dev/null 2>&1; then
+		systemctl enable --now docker.service
+	fi
 	docker info >/dev/null 2>&1 || die "Docker daemon is unavailable"
-	docker compose version >/dev/null 2>&1 ||
-		die "Docker Compose plugin is required"
+	docker compose version >/dev/null 2>&1 || die "Docker Compose plugin is required"
+}
+
+prepare_docker_image() {
+	ensure_docker
+	docker pull "$ONE_NODE_DOCKER_IMAGE"
+	version_output=$(docker run --rm --entrypoint /usr/local/bin/one-node-node \
+		"$ONE_NODE_DOCKER_IMAGE" version) ||
+		die "immutable One Node image cannot run on this machine"
+	case "$version_output" in
+	"one-node-node $ONE_NODE_VERSION "*"; sing-box "*) ;;
+	*) die "immutable image has unexpected product or data-plane metadata" ;;
+	esac
 }
 
 write_docker_source() {
-	ensure_docker
-	install -d -m 0755 /usr/local/etc/xray
-	cat > "$COMPOSE_SOURCE" <<EOF
+	cat >"$COMPOSE_SOURCE" <<EOF
 services:
   one-node-node:
     image: "${ONE_NODE_DOCKER_IMAGE}"
     container_name: "${CONTAINER_NAME}"
     network_mode: host
     restart: unless-stopped
+    read_only: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     env_file:
       - "${ENV_FILE}"
     volumes:
       - "${INSTALL_DIR}:${INSTALL_DIR}"
       - "${ONE_NODE_STATE_DIR}:${ONE_NODE_STATE_DIR}"
-      - "/usr/local/etc/xray:/usr/local/etc/xray"
-      - "${XRAY_BINARY_HOST}:/usr/local/bin/xray:ro"
       - "/etc/ssl/certs:/etc/ssl/certs:ro"
-    entrypoint:
-      - "${BINARY_FILE}"
-      - "start"
+    tmpfs:
+      - /tmp:mode=1777
+    command:
+      - start
 EOF
 	chmod 0600 "$COMPOSE_SOURCE"
 }
 
-capture_docker_runtime_state() {
-	if docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null |
-		grep -qx true; then
-		OLD_DOCKER_RUNNING="true"
-	fi
-}
-
 install_docker_runtime() {
-	COMPOSE_TARGET_TMP=$(mktemp "${INSTALL_DIR}/.docker-compose.yml.XXXXXX")
-	install -m 0600 "$COMPOSE_SOURCE" "$COMPOSE_TARGET_TMP"
-	mv -f "$COMPOSE_TARGET_TMP" "$COMPOSE_FILE"
-	COMPOSE_TARGET_TMP=""
-	docker compose -f "$COMPOSE_FILE" up -d --force-recreate
-	docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" |
-		grep -qx true ||
-		die "Docker service did not become active"
+	install -m 0600 "$COMPOSE_SOURCE" "$COMPOSE_FILE"
+	docker compose -f "$COMPOSE_FILE" up -d
+	docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" | grep -qx true ||
+		die "One Node container did not become active"
 }

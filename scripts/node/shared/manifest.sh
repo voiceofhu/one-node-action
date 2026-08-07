@@ -1,13 +1,13 @@
 #!/bin/sh
 
-MANIFEST_FORMAT_V1="one-node-v2-manifest-v1"
+MANIFEST_FORMAT_V1="one-node-manifest-v1"
 MANIFEST_INSTALL_DIR="/opt/one-node-node"
 MANIFEST_BINARY_PATH="${MANIFEST_INSTALL_DIR}/one-node-node"
 MANIFEST_PREVIOUS_DIR="${MANIFEST_INSTALL_DIR}/previous"
 MANIFEST_PREVIOUS_BINARY_PATH_FIXED="${MANIFEST_PREVIOUS_DIR}/one-node-node"
 MANIFEST_ENV_PATH="${MANIFEST_INSTALL_DIR}/one-node-node.env"
 MANIFEST_COMPOSE_PATH="${MANIFEST_INSTALL_DIR}/docker-compose.yml"
-MANIFEST_RECORD_PATH="${MANIFEST_INSTALL_DIR}/.installation-v2"
+MANIFEST_RECORD_PATH="${MANIFEST_INSTALL_DIR}/.installation"
 MANIFEST_UNIT_PATH="/etc/systemd/system/one-node-node.service"
 
 manifest_fail() {

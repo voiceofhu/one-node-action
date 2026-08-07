@@ -11,37 +11,34 @@ Server 使用以下稳定 URL：
 
 - `https://github.com/voiceofhu/one-node-action/raw/refs/heads/main/install.sh`
 - `https://github.com/voiceofhu/one-node-action/raw/refs/heads/main/uninstall.sh`
+- `https://github.com/voiceofhu/one-node-action/raw/refs/heads/main/upgrade.sh`
 
-根目录文件只负责稳定入口和模块加载。实际逻辑按安装、卸载分别放在
-`scripts/node/install/` 与 `scripts/node/uninstall/`，并按公共校验、配置、
-宿主依赖、Xray、文件事务、Native、Docker、注册等待和主流程拆分。模块清单由
-根入口显式声明，远程执行时会从同一个固定 commit 下载并校验语法后统一加载。
+根目录文件只负责稳定入口和模块加载。实际逻辑放在 `scripts/node/`，按公共
+manifest、安装、升级、回滚和卸载拆分。模块清单由根入口显式声明，远程执行时
+会从 Server 固定的同一 immutable URL 下载并校验语法后统一加载。
 
-通过 raw URL 执行时，入口先从 GitHub API 把 `main` 解析成固定的 40 位提交
-SHA，再从该提交加载对应实现；单次执行不会混用不同提交的文件。本地直接运行
-根目录脚本时，会使用工作区中的实现，便于测试。
+Server 生成命令时会同时固定入口脚本、`ONE_NODE_SCRIPT_BASE_URL` 和发布资产，
+确保单次安装不会混用不同提交的文件。本地直接运行根目录脚本时，会使用工作区
+中的实现，便于测试。
 
 安装方式保持不变：
 
 - `install.sh --mode native`：安装原生二进制并注册 systemd 服务。
 - `install.sh --mode docker`：安装或复用 Docker，以 Compose 运行节点代理。
-- `uninstall.sh`：根据 `/opt/one-node-node/.installation` 自动识别安装方式。
+- `upgrade.sh`：为 Native 或 Docker 安装切换不可变版本；失败时自动回滚。
+- `upgrade.sh --rollback`：显式恢复 manifest 中唯一保留的上一版本。
+- `uninstall.sh`：根据 `/opt/one-node-node/.installation` 自动识别安装方式，只
+  删除经过 canonical allowlist 验证的 One Node 自有路径。
 
-两种安装方式都会先检查宿主机 Xray。已有可用的 Xray 二进制、官方目录结构、
-GeoData 和已启用且运行中的 `xray.service` 时直接复用；缺失或不完整时，安装器
-会按照 XTLS/Xray-install 官方方式下载 `install-release.sh` 并执行无版本覆盖的
-`install`，由官方脚本选择和安装最新正式版 Xray Core 与 GeoData。One Node 会
-先将脚本保存到受限临时文件并检查 Bash 语法，完成后再确认服务、配置和 GeoData
-均已就绪。卸载 One Node 时会再次下载并校验该官方脚本，再执行 `remove` 卸载
-宿主机 Xray。Docker 模式会在移除 One Node 容器后检查全部容器；只有没有其他
-容器时才卸载 Docker Engine，否则保留 Docker。
+安装器只部署 sing-box One Node runtime。Native 模式只管理单一
+`one-node-node.service`；Docker 模式只管理 manifest 记录的完整 One Node 镜像和
+容器。安装、升级和卸载均不安装、修改或删除宿主机的其他代理软件，也不卸载
+Docker Engine。成功条件为控制面身份激活且 runtime active revision 达到 Server
+指定值；配置 revision 未指定时仍必须观测到大于零的有效配置。
 
-默认情况下，安装器从本仓库最新 GitHub Release 下载 `SHA256SUMS`，解析
-`one-node-node-linux-amd64` 的 digest，再下载并校验节点二进制。因此 Server
-只需要生成控制地址、节点 ID 和一次性 token，不需要配置发布资产 URL。测试或
-私有发布仍可成对传入 `ONE_NODE_BINARY_URL` 与
-`ONE_NODE_BINARY_SHA256` 覆盖默认资产。Server 默认生成简短的 `curl | sh`
-命令，目标 Debian 需要预先提供 `curl`；安装器会继续检查其余必备命令。
+Server 为安装器提供不可变版本、release URL、架构对应 SHA-256 或完整镜像
+digest，以及期望的配置和 Binding revision。目标 Debian 需要预先提供 `curl`；
+安装器会继续检查其余必备命令。
 
 ## Release Node
 

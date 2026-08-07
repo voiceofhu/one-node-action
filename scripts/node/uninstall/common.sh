@@ -1,21 +1,17 @@
 #!/bin/sh
 
-# Shared uninstaller configuration, validation, and installation detection.
-# Uninstaller globals are shared across sourced modules.
-# shellcheck disable=SC2034
+# The uninstaller removes only canonical manifest-owned paths. Pre-existing
+# credential state is never claimed by a later installation.
 
 initialize_uninstall_config() {
 	INSTALL_DIR="/opt/one-node-node"
 	UNIT_FILE="/etc/systemd/system/one-node-node.service"
 	COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 	INSTALL_RECORD="${INSTALL_DIR}/.installation"
-	DEFAULT_STATE_DIR="/var/lib/one-node-node"
 	CONTAINER_NAME="one-node-node"
-	ONE_NODE_XRAY_INSTALLER_URL=${ONE_NODE_XRAY_INSTALLER_URL:-https://github.com/XTLS/Xray-install/raw/main/install-release.sh}
 	REQUESTED_MODE=""
 	installed_mode=""
-	state_dir="$DEFAULT_STATE_DIR"
-	UNINSTALL_TEMP_DIR=""
+	state_dir=""
 }
 
 log() {
@@ -29,106 +25,45 @@ die() {
 
 show_help() {
 	printf '%s\n' \
-		"Uninstall One Node." \
+		"Uninstall the One Node sing-box runtime." \
 		"" \
 		"Usage: uninstall.sh [--mode <native|docker>]" \
 		"" \
-		"The mode is normally detected from the protected installation record." \
-		"Host Xray is removed with the official XTLS installer." \
-		"Docker is removed only when no other containers remain."
+		"Pre-existing credential and runtime state are retained."
 }
 
 parse_uninstall_arguments() {
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
-			--mode)
-				[ "$#" -ge 2 ] || die "--mode requires native or docker"
-				[ -z "$REQUESTED_MODE" ] ||
-					die "--mode may be supplied only once"
-				REQUESTED_MODE=$2
-				shift 2
-				;;
-			--help|-h)
-				show_help
-				exit 0
-				;;
-			*) die "unknown argument: $1" ;;
+		--mode)
+			[ "$#" -ge 2 ] || die "--mode requires native or docker"
+			[ -z "$REQUESTED_MODE" ] || die "--mode may be supplied only once"
+			REQUESTED_MODE=$2
+			shift 2
+			;;
+		--help|-h)
+			show_help
+			exit 0
+			;;
+		*) die "unknown argument: $1" ;;
 		esac
 	done
 	case "$REQUESTED_MODE" in
-		""|native|docker) ;;
-		*) die "--mode must be native or docker" ;;
+	""|native|docker) ;;
+	*) die "--mode must be native or docker" ;;
 	esac
 }
 
-load_installation_state() {
-	if [ -e "$INSTALL_RECORD" ]; then
-		[ -f "$INSTALL_RECORD" ] && [ ! -L "$INSTALL_RECORD" ] ||
-			die "installation record must be a regular file"
-		installed_mode=$(sed -n 's/^runtime=//p' "$INSTALL_RECORD" | head -n 1)
-		recorded_state_dir=$(sed -n 's/^state_dir=//p' "$INSTALL_RECORD" | head -n 1)
-		if [ -n "$recorded_state_dir" ]; then
-			state_dir=$recorded_state_dir
-		fi
+load_installation() {
+	if [ ! -e "$INSTALL_RECORD" ]; then
+		log "no One Node installation was found"
+		return 1
 	fi
-	if [ -z "$installed_mode" ]; then
-		if [ -f "$UNIT_FILE" ] && [ ! -L "$UNIT_FILE" ]; then
-			installed_mode="native"
-		elif command -v docker >/dev/null 2>&1 &&
-			docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
-			installed_mode="docker"
-		fi
-	fi
-}
-
-validate_installation_state() {
-	case "$installed_mode" in
-		native|docker) ;;
-		*) die "installation record contains an unsupported runtime" ;;
-	esac
+	manifest_load "$INSTALL_RECORD" || die "refusing unknown or unsafe installation manifest"
+	installed_mode=$MANIFEST_MODE
+	state_dir=$MANIFEST_STATE_DIR
 	if [ -n "$REQUESTED_MODE" ] && [ "$REQUESTED_MODE" != "$installed_mode" ]; then
 		die "One Node is installed in ${installed_mode} mode, not ${REQUESTED_MODE}"
 	fi
-
-	case "$state_dir" in
-		/*) ;;
-		*) die "recorded state directory is not absolute" ;;
-	esac
-	state_dir=$(realpath -m -- "$state_dir")
-	case "$state_dir" in
-		*[!A-Za-z0-9_./-]*)
-			die "recorded state directory contains unsupported characters"
-			;;
-	esac
-	case "$state_dir" in
-		/|/bin|/boot|/dev|/etc|/home|/lib|/lib32|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var|"$INSTALL_DIR")
-			die "refusing to remove unsafe state directory: $state_dir"
-			;;
-	esac
-
-	case "$ONE_NODE_XRAY_INSTALLER_URL" in
-		https://*) ;;
-		*) die "ONE_NODE_XRAY_INSTALLER_URL must use HTTPS" ;;
-	esac
-}
-
-prepare_uninstall_temp_dir() {
-	[ -z "$UNINSTALL_TEMP_DIR" ] || return 0
-	UNINSTALL_TEMP_DIR=$(mktemp -d "/tmp/one-node-uninstall.XXXXXX")
-	chmod 0700 "$UNINSTALL_TEMP_DIR"
-}
-
-cleanup_uninstall_temp_dir() {
-	[ -z "$UNINSTALL_TEMP_DIR" ] ||
-		rm -rf -- "$UNINSTALL_TEMP_DIR"
-	UNINSTALL_TEMP_DIR=""
-}
-
-remove_installation_state() {
-	rm -rf -- "$INSTALL_DIR"
-	if [ -e "$state_dir" ]; then
-		[ -d "$state_dir" ] && [ ! -L "$state_dir" ] ||
-			die "state directory must be a real directory"
-		rm -rf -- "$state_dir"
-	fi
+	return 0
 }

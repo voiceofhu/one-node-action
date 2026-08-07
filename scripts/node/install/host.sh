@@ -1,62 +1,52 @@
 #!/bin/sh
 
-# Host compatibility checks and installed-mode detection.
-
 validate_install_host() {
 	[ "$(id -u)" -eq 0 ] || die "run this installer as root"
 	[ -r /etc/os-release ] || die "cannot identify the operating system"
-
 	# /etc/os-release is controlled by the installed operating system.
 	# shellcheck disable=SC1091
 	. /etc/os-release
 	[ "${ID:-}" = "debian" ] || die "only Debian is supported"
-
 	command -v dpkg >/dev/null 2>&1 || die "dpkg is required"
-	[ "$(dpkg --print-architecture)" = "amd64" ] ||
-		die "only Debian amd64 is supported"
-	case "$(uname -m)" in
-		x86_64|amd64) ;;
-		*) die "only x86_64/amd64 machines are supported" ;;
-	esac
+	command -v curl >/dev/null 2>&1 || die "curl is required"
+	command -v realpath >/dev/null 2>&1 || die "realpath is required (install coreutils)"
+	command -v stat >/dev/null 2>&1 || die "stat is required (install coreutils)"
+	command -v awk >/dev/null 2>&1 || die "awk is required"
 
-	command -v systemctl >/dev/null 2>&1 ||
-		die "systemd is required to install One Node and Xray"
-	command -v getent >/dev/null 2>&1 ||
-		die "getent is required to manage the Xray service account"
-	command -v groupadd >/dev/null 2>&1 ||
-		die "groupadd is required to manage the Xray service account"
-	command -v useradd >/dev/null 2>&1 ||
-		die "useradd is required to manage the Xray service account"
-	command -v chgrp >/dev/null 2>&1 ||
-		die "chgrp is required to grant Xray access to protected files"
-	command -v curl >/dev/null 2>&1 ||
-		die "curl is required to run this installer"
-	command -v sha256sum >/dev/null 2>&1 ||
-		die "sha256sum is required (install coreutils)"
-	command -v sed >/dev/null 2>&1 || die "sed is required"
-	command -v realpath >/dev/null 2>&1 ||
-		die "realpath is required (install coreutils)"
-	command -v grep >/dev/null 2>&1 || die "grep is required"
-	command -v stat >/dev/null 2>&1 ||
-		die "stat is required (install coreutils)"
-	command -v timeout >/dev/null 2>&1 ||
-		die "timeout is required (install coreutils)"
+	resolve_host_architecture
+	if [ "$INSTALL_MODE" = "native" ]; then
+		command -v sha256sum >/dev/null 2>&1 ||
+			die "sha256sum is required (install coreutils)"
+		command -v systemctl >/dev/null 2>&1 ||
+			die "systemd is required for native installation"
+	fi
 }
 
-validate_install_mode_transition() {
-	installed_mode=""
-	if [ -f "$INSTALL_RECORD" ] && [ ! -L "$INSTALL_RECORD" ]; then
-		installed_mode=$(sed -n 's/^runtime=//p' "$INSTALL_RECORD" | head -n 1)
-	fi
-	if [ -z "$installed_mode" ]; then
-		if [ -f "$UNIT_FILE" ] && [ ! -L "$UNIT_FILE" ]; then
-			installed_mode="native"
-		elif command -v docker >/dev/null 2>&1 &&
-			docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
-			installed_mode="docker"
-		fi
-	fi
-	if [ -n "$installed_mode" ] && [ "$installed_mode" != "$INSTALL_MODE" ]; then
-		die "One Node is installed in ${installed_mode} mode; uninstall it before switching to ${INSTALL_MODE}"
+resolve_host_architecture() {
+	dpkg_architecture=$(dpkg --print-architecture)
+	machine_architecture=$(uname -m)
+	case "$dpkg_architecture:$machine_architecture" in
+	amd64:x86_64|amd64:amd64)
+		ONE_NODE_ARCH="amd64"
+		ONE_NODE_BINARY_SHA256=$ONE_NODE_BINARY_SHA256_AMD64
+		;;
+	arm64:aarch64|arm64:arm64)
+		ONE_NODE_ARCH="arm64"
+		ONE_NODE_BINARY_SHA256=$ONE_NODE_BINARY_SHA256_ARM64
+		;;
+	amd64:*|arm64:*) die "dpkg and kernel architectures do not match" ;;
+	*) die "only Debian amd64 and arm64 are supported" ;;
+	esac
+	ONE_NODE_BINARY_NAME="one-node-node-linux-${ONE_NODE_ARCH}"
+}
+
+validate_install_target() {
+	[ ! -L "$INSTALL_DIR" ] || die "installation directory must not be a symlink"
+	[ ! -e "$INSTALL_RECORD" ] ||
+		die "an installation already exists; upgrades belong to the upgrade workflow"
+	[ ! -e "$UNIT_FILE" ] || die "one-node-node.service already exists"
+	if command -v docker >/dev/null 2>&1 &&
+		docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+		die "one-node-node container already exists"
 	fi
 }

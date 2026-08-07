@@ -13,7 +13,7 @@ initialize_upgrade() {
 	UPGRADE_MANIFEST_ADVANCED="false"
 	UPGRADE_OLD_VERSION=""
 	UPGRADE_OLD_BINARY_SHA256=""
-	UPGRADE_TEMP_DIR=$(mktemp -d "/tmp/one-node-v2-upgrade.XXXXXX")
+	UPGRADE_TEMP_DIR=$(mktemp -d "/tmp/one-node-upgrade.XXXXXX")
 	chmod 0700 "$UPGRADE_TEMP_DIR"
 	BINARY_SOURCE="${UPGRADE_TEMP_DIR}/one-node-node.download"
 	STAGED_BINARY="${INSTALL_DIR}/.one-node-node.next"
@@ -52,7 +52,7 @@ parse_upgrade_arguments() {
 			printf '%s\n' \
 				"Upgrade or roll back the One Node sing-box runtime." \
 				"" \
-				"Usage: upgrade-v2.sh [--rollback]"
+				"Usage: upgrade.sh [--rollback]"
 			exit 0
 			;;
 		*) die "unknown argument: $1" ;;
@@ -63,7 +63,7 @@ parse_upgrade_arguments() {
 load_upgrade_manifest() {
 	command -v realpath >/dev/null 2>&1 || die "realpath is required (install coreutils)"
 	command -v stat >/dev/null 2>&1 || die "stat is required (install coreutils)"
-	manifest_load "$INSTALL_RECORD" || die "refusing unknown or unsafe v2 installation manifest"
+	manifest_load "$INSTALL_RECORD" || die "refusing unknown or unsafe installation manifest"
 	INSTALL_MODE=$MANIFEST_MODE
 	ONE_NODE_STATE_DIR=$MANIFEST_STATE_DIR
 	IDENTITY_FILE="${ONE_NODE_STATE_DIR}/node-secret"

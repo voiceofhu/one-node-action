@@ -7,15 +7,12 @@
 .PHONY: check
 
 check:
-	sh -n "$(PROJECT_ROOT)/install.sh" "$(PROJECT_ROOT)/uninstall.sh" \
+	sh -n "$(PROJECT_ROOT)/install.sh" "$(PROJECT_ROOT)/uninstall.sh" "$(PROJECT_ROOT)/upgrade.sh" \
+		"$(PROJECT_ROOT)"/scripts/node/shared/*.sh \
 		"$(PROJECT_ROOT)"/scripts/node/install/*.sh \
 		"$(PROJECT_ROOT)"/scripts/node/uninstall/*.sh \
+		"$(PROJECT_ROOT)"/scripts/node/upgrade/*.sh \
 		"$(PROJECT_ROOT)/tests/scripts_test.sh"
-	sh -n "$(PROJECT_ROOT)/install-v2.sh" "$(PROJECT_ROOT)/uninstall-v2.sh" "$(PROJECT_ROOT)/upgrade-v2.sh" \
-		"$(PROJECT_ROOT)"/scripts/node-v2/shared/*.sh \
-		"$(PROJECT_ROOT)"/scripts/node-v2/install/*.sh \
-		"$(PROJECT_ROOT)"/scripts/node-v2/uninstall/*.sh \
-		"$(PROJECT_ROOT)"/scripts/node-v2/upgrade/*.sh
 	bash -n "$(PROJECT_ROOT)/.github/scripts/deploy-server.sh"
 	"$(PROJECT_ROOT)/tests/scripts_test.sh"
 	$(MAKE) --no-print-directory deploy-server DRY_RUN=true VERSION=1.2.3 >/dev/null

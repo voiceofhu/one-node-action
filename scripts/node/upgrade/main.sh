@@ -1,7 +1,7 @@
 #!/bin/sh
 
 if ! command -v manifest_load >/dev/null 2>&1; then
-	printf '%s\n' "[one-node-node] error: upgrade main module must be loaded through upgrade-v2.sh" >&2
+	printf '%s\n' "[one-node-node] error: upgrade main module must be loaded through upgrade.sh" >&2
 	exit 1
 fi
 

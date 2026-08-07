@@ -5,71 +5,27 @@ ROOT_DIR=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 TEST_TEMP_DIR=$(mktemp -d)
 trap 'rm -rf -- "$TEST_TEMP_DIR"' EXIT HUP INT TERM
 
-INSTALL_MODULES="common.sh config.sh host.sh xray.sh files.sh native.sh docker.sh enrollment.sh main.sh"
-UNINSTALL_MODULES="common.sh native.sh docker.sh xray.sh main.sh"
+INSTALL_MODULES="install/common.sh shared/manifest.sh install/config.sh install/host.sh install/files.sh install/native.sh install/docker.sh install/readiness.sh install/main.sh"
+UNINSTALL_MODULES="uninstall/common.sh shared/manifest.sh uninstall/paths.sh uninstall/native.sh uninstall/docker.sh uninstall/main.sh"
+UPGRADE_MODULES="install/common.sh shared/manifest.sh install/host.sh install/files.sh install/docker.sh install/readiness.sh upgrade/common.sh upgrade/manifest.sh upgrade/native.sh upgrade/docker.sh upgrade/rollback.sh upgrade/main.sh"
 
-sh -n "$ROOT_DIR/install.sh"
-sh -n "$ROOT_DIR/uninstall.sh"
-for module in $INSTALL_MODULES; do
-	sh -n "$ROOT_DIR/scripts/node/install/$module"
-	grep -F "$module" "$ROOT_DIR/install.sh" >/dev/null
+for entrypoint in install.sh uninstall.sh upgrade.sh; do
+	sh -n "$ROOT_DIR/$entrypoint"
 done
-for module in $UNINSTALL_MODULES; do
-	sh -n "$ROOT_DIR/scripts/node/uninstall/$module"
-	grep -F "$module" "$ROOT_DIR/uninstall.sh" >/dev/null
+for module in $(printf '%s\n' "$INSTALL_MODULES $UNINSTALL_MODULES $UPGRADE_MODULES" | tr ' ' '\n' | sort -u); do
+	sh -n "$ROOT_DIR/scripts/node/$module"
 done
 
-grep -F "scripts/node/install" "$ROOT_DIR/install.sh" >/dev/null
-grep -F "scripts/node/uninstall" "$ROOT_DIR/uninstall.sh" >/dev/null
-grep -F "https://raw.githubusercontent.com/voiceofhu/one-node-action" \
-	"$ROOT_DIR/install.sh" >/dev/null
-grep -F "https://raw.githubusercontent.com/voiceofhu/one-node-action" \
-	"$ROOT_DIR/uninstall.sh" >/dev/null
-grep -F 'https://github.com/XTLS/Xray-install/raw/main/install-release.sh' \
-	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
-# The literal installer variable proves the module delegates version selection.
-# shellcheck disable=SC2016
-grep -F 'bash "$xray_installer" install' \
-	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
-# shellcheck disable=SC2016
-grep -F 'bash "$xray_installer" install -u "$XRAY_SERVICE_USER"' \
-	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
-# shellcheck disable=SC2016
-grep -F 'groupadd --system "$XRAY_SERVICE_GROUP"' \
-	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
-# shellcheck disable=SC2016
-grep -F 'useradd --system --gid "$XRAY_SERVICE_GROUP"' \
-	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
-# The literal installer variable proves the uninstaller delegates to XTLS.
-# shellcheck disable=SC2016
-grep -F 'bash "$xray_installer" remove' \
-	"$ROOT_DIR/scripts/node/uninstall/xray.sh" >/dev/null
-grep -F 'docker ps -aq' \
-	"$ROOT_DIR/scripts/node/uninstall/docker.sh" >/dev/null
-grep -F 'apt-get purge -y' \
-	"$ROOT_DIR/scripts/node/uninstall/docker.sh" >/dev/null
-grep -F 'xray_installation_ready' \
-	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
-# The literal variable expression proves the generated config follows the
-# enrollment-provided local API address.
-# shellcheck disable=SC2016
-grep -F '"listen": "${ONE_NODE_XRAY_API_ADDR}"' \
-	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
-grep -F '"statsUserOnline": true' \
-	"$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null
-grep -F 'write_env "XRAY_STATS_INTERVAL" "30s"' \
-	"$ROOT_DIR/scripts/node/install/files.sh" >/dev/null
-grep -F 'write_env "XRAY_MANAGE_SERVICE" "true"' \
-	"$ROOT_DIR/scripts/node/install/files.sh" >/dev/null
-grep -F 'write_env "XRAY_MANAGE_SERVICE" "false"' \
-	"$ROOT_DIR/scripts/node/install/files.sh" >/dev/null
-if grep -Eq '^XRAY_(INSTALLER_COMMIT|INSTALLER_SHA256|VERSION)=' \
-	"$ROOT_DIR/scripts/node/install/xray.sh"; then
-	printf '%s\n' "Xray installation still contains a pinned version or installer revision" >&2
-	exit 1
-fi
-if grep -F -- '--version' "$ROOT_DIR/scripts/node/install/xray.sh" >/dev/null; then
-	printf '%s\n' "Xray installation still overrides the official latest-version selection" >&2
+for removed in install-v2.sh uninstall-v2.sh upgrade-v2.sh scripts/node-v2; do
+	[ ! -e "$ROOT_DIR/$removed" ] || {
+		printf '%s\n' "obsolete installer path remains: $removed" >&2
+		exit 1
+	}
+done
+if grep -R -i -E 'xray|node-v2|install-v2|uninstall-v2|upgrade-v2' \
+	"$ROOT_DIR/install.sh" "$ROOT_DIR/uninstall.sh" "$ROOT_DIR/upgrade.sh" \
+	"$ROOT_DIR/scripts/node" >/dev/null; then
+	printf '%s\n' "canonical installer still contains a legacy name" >&2
 	exit 1
 fi
 
@@ -77,6 +33,7 @@ fi
 "$ROOT_DIR/install.sh" --help | grep -F "docker" >/dev/null
 "$ROOT_DIR/uninstall.sh" --help | grep -F "native" >/dev/null
 "$ROOT_DIR/uninstall.sh" --help | grep -F "docker" >/dev/null
+"$ROOT_DIR/upgrade.sh" --help | grep -F "roll back" >/dev/null
 
 if "$ROOT_DIR/install.sh" --mode package >/dev/null 2>&1; then
 	printf '%s\n' "installer accepted an unsupported mode" >&2
@@ -86,189 +43,61 @@ if "$ROOT_DIR/uninstall.sh" --mode package >/dev/null 2>&1; then
 	printf '%s\n' "uninstaller accepted an unsupported mode" >&2
 	exit 1
 fi
-if sh "$ROOT_DIR/scripts/node/install/main.sh" \
-	>"$TEST_TEMP_DIR/standalone-install-main.log" 2>&1; then
-	printf '%s\n' "installer main module ran without the public module loader" >&2
-	exit 1
-fi
-grep -F "must be loaded through install.sh" \
-	"$TEST_TEMP_DIR/standalone-install-main.log" >/dev/null
-if sh "$ROOT_DIR/scripts/node/uninstall/main.sh" \
-	>"$TEST_TEMP_DIR/standalone-uninstall-main.log" 2>&1; then
-	printf '%s\n' "uninstaller main module ran without the public module loader" >&2
-	exit 1
-fi
-grep -F "must be loaded through uninstall.sh" \
-	"$TEST_TEMP_DIR/standalone-uninstall-main.log" >/dev/null
+for module in install uninstall upgrade; do
+	if sh "$ROOT_DIR/scripts/node/$module/main.sh" \
+		>"$TEST_TEMP_DIR/standalone-$module.log" 2>&1; then
+		printf '%s\n' "$module main module ran without its public loader" >&2
+		exit 1
+	fi
+	grep -F "must be loaded through $module.sh" \
+		"$TEST_TEMP_DIR/standalone-$module.log" >/dev/null
+done
 
 install -d -m 0755 "$TEST_TEMP_DIR/bin"
-cp "$ROOT_DIR/install.sh" "$TEST_TEMP_DIR/install.sh"
-cp "$ROOT_DIR/uninstall.sh" "$TEST_TEMP_DIR/uninstall.sh"
-chmod 0755 "$TEST_TEMP_DIR/install.sh" "$TEST_TEMP_DIR/uninstall.sh"
-cat > "$TEST_TEMP_DIR/bin/curl" <<'FAKE_CURL'
+cat >"$TEST_TEMP_DIR/bin/curl" <<'FAKE_CURL'
 #!/bin/sh
 set -eu
 output=""
 url=""
 while [ "$#" -gt 0 ]; do
 	case "$1" in
-		--output)
-			output=$2
-			shift 2
-			;;
-		http://*|https://*)
-			url=$1
-			shift
-			;;
-		*) shift ;;
+	--output)
+		output=$2
+		shift 2
+		;;
+	http://*|https://*)
+		url=$1
+		shift
+		;;
+	*) shift ;;
 	esac
 done
 [ -n "$output" ] && [ -n "$url" ]
-module=${url##*/}
-case "$url" in
-	*/install/*) source_file="${ONE_NODE_TEST_ROOT}/scripts/node/install/${module}" ;;
-	*/uninstall/*) source_file="${ONE_NODE_TEST_ROOT}/scripts/node/uninstall/${module}" ;;
-	*) exit 1 ;;
-esac
+relative=${url#*scripts/node/}
+source_file="${ONE_NODE_TEST_ROOT}/scripts/node/${relative}"
+[ -f "$source_file" ]
 cp "$source_file" "$output"
-printf '%s\n' "$url" >> "${ONE_NODE_TEST_TEMP}/module-requests.log"
 FAKE_CURL
 chmod 0755 "$TEST_TEMP_DIR/bin/curl"
 
 export ONE_NODE_TEST_ROOT="$ROOT_DIR"
-export ONE_NODE_TEST_TEMP="$TEST_TEMP_DIR"
-PATH="$TEST_TEMP_DIR/bin:$PATH" \
-	ONE_NODE_SCRIPT_BASE_URL="http://127.0.0.1:9999/scripts/node" \
-	"$TEST_TEMP_DIR/install.sh" --help |
-	grep -F "native" >/dev/null
-PATH="$TEST_TEMP_DIR/bin:$PATH" \
-	ONE_NODE_SCRIPT_BASE_URL="http://127.0.0.1:9999/scripts/node" \
-	"$TEST_TEMP_DIR/uninstall.sh" --help |
-	grep -F "native" >/dev/null
-for module in $INSTALL_MODULES; do
-	grep -F "/install/$module" "$TEST_TEMP_DIR/module-requests.log" >/dev/null
-done
-for module in $UNINSTALL_MODULES; do
-	grep -F "/uninstall/$module" "$TEST_TEMP_DIR/module-requests.log" >/dev/null
+for entrypoint in install.sh uninstall.sh upgrade.sh; do
+	cp "$ROOT_DIR/$entrypoint" "$TEST_TEMP_DIR/$entrypoint"
+	chmod 0755 "$TEST_TEMP_DIR/$entrypoint"
+	PATH="$TEST_TEMP_DIR/bin:$PATH" \
+		ONE_NODE_ALLOW_INSECURE=true \
+		ONE_NODE_SCRIPT_BASE_URL="http://127.0.0.1:9999/scripts/node" \
+		"$TEST_TEMP_DIR/$entrypoint" --help >/dev/null
 done
 
-install -d -m 0755 \
-	"$TEST_TEMP_DIR/xray-bin" \
-	"$TEST_TEMP_DIR/xray-config" \
-	"$TEST_TEMP_DIR/xray-geodata"
-printf '%s\n' "geoip" > "$TEST_TEMP_DIR/xray-geodata/geoip.dat"
-printf '%s\n' "geosite" > "$TEST_TEMP_DIR/xray-geodata/geosite.dat"
-printf '%s\n' "[Service]" > "$TEST_TEMP_DIR/xray.service"
-cat > "$TEST_TEMP_DIR/xray-bin/xray" <<'FAKE_XRAY'
-#!/bin/sh
-set -eu
-case "${1:-}" in
-	version)
-		printf '%s\n' "Xray 26.test"
-		;;
-	-test)
-		config_path=""
-		while [ "$#" -gt 0 ]; do
-			case "$1" in
-				-config)
-					config_path=$2
-					shift 2
-					;;
-				*) shift ;;
-			esac
-		done
-		[ -n "$config_path" ]
-		! grep -F "INVALID_CONFIG" "$config_path" >/dev/null
-		;;
-	api)
-		[ "${2:-}" = "statsquery" ]
-		[ "${3:-}" = "--server=127.0.0.1:27522" ]
-		;;
-	*)
-		exit 1
-		;;
-esac
-FAKE_XRAY
-chmod 0755 "$TEST_TEMP_DIR/xray-bin/xray"
-
-(
-	for module in $INSTALL_MODULES; do
-		# shellcheck disable=SC1090
-		. "$ROOT_DIR/scripts/node/install/$module"
-	done
-	initialize_install_config
-	initialize_xray_config
-	TEMP_DIR="$TEST_TEMP_DIR/xray-work"
-	install -d -m 0700 "$TEMP_DIR"
-	XRAY_CONFIG_DIR="$TEST_TEMP_DIR/xray-config"
-	XRAY_CONFIG_FILE="${XRAY_CONFIG_DIR}/config.json"
-	XRAY_GEODATA_DIR="$TEST_TEMP_DIR/xray-geodata"
-	XRAY_SERVICE_FILE="$TEST_TEMP_DIR/xray.service"
-	# shellcheck disable=SC2034
-	XRAY_SERVICE_USER="one-node-xray"
-	XRAY_SERVICE_GROUP="one-node-xray"
-	XRAY_SERVICE_OVERRIDE_DIR="${XRAY_SERVICE_FILE}.d"
-	XRAY_SERVICE_USER_OVERRIDE_FILE="${XRAY_SERVICE_OVERRIDE_DIR}/99-one-node-service-user.conf"
-	XRAY_LOG_DIR="$TEST_TEMP_DIR/xray-log"
-	XRAY_HYSTERIA_CONFIG_DIR="$TEST_TEMP_DIR/hysteria"
-	XRAY_HYSTERIA_PRIVATE_KEY="${XRAY_HYSTERIA_CONFIG_DIR}/private.key"
-	XRAY_MANAGED_CONFIG_MARKER="${XRAY_CONFIG_DIR}/.one-node-managed-config"
-	PATH="$TEST_TEMP_DIR/xray-bin:$PATH"
-	export PATH XRAY_GEODATA_DIR XRAY_SERVICE_FILE
-	XRAY_BINARY_HOST=$(resolve_xray_binary)
-	export XRAY_BINARY_HOST
-
-	printf '%s\n' '{}' > "$XRAY_CONFIG_FILE"
-	prepare_xray_config
-	[ "$XRAY_CONFIG_OWNERSHIP" = "managed" ]
-	grep -F '"listen": "127.0.0.1:27522"' "$XRAY_CONFIG_FILE" >/dev/null
-	grep -F '"HandlerService"' "$XRAY_CONFIG_FILE" >/dev/null
-	grep -F '"StatsService"' "$XRAY_CONFIG_FILE" >/dev/null
-	grep -F '"statsUserOnline": true' "$XRAY_CONFIG_FILE" >/dev/null
-	[ -f "$XRAY_MANAGED_CONFIG_MARKER" ]
-
-	XRAY_SERVICE_USER_CHANGED=""
-	write_xray_service_user_override
-	[ "$XRAY_SERVICE_USER_CHANGED" = "true" ]
-	grep -F '[Service]' "$XRAY_SERVICE_USER_OVERRIDE_FILE" >/dev/null
-	grep -F "User=$XRAY_SERVICE_USER" "$XRAY_SERVICE_USER_OVERRIDE_FILE" >/dev/null
-	grep -F "Group=$XRAY_SERVICE_GROUP" "$XRAY_SERVICE_USER_OVERRIDE_FILE" >/dev/null
-	XRAY_SERVICE_USER_CHANGED=""
-	write_xray_service_user_override
-	[ -z "$XRAY_SERVICE_USER_CHANGED" ]
-
-	install -d -m 0700 "$XRAY_LOG_DIR" "$XRAY_HYSTERIA_CONFIG_DIR"
-	printf '%s\n' 'access' > "$XRAY_LOG_DIR/access.log"
-	printf '%s\n' 'error' > "$XRAY_LOG_DIR/error.log"
-	printf '%s\n' 'private' > "$XRAY_HYSTERIA_PRIVATE_KEY"
-	chmod 0600 "$XRAY_CONFIG_FILE" "$XRAY_LOG_DIR/access.log" \
-		"$XRAY_LOG_DIR/error.log" "$XRAY_HYSTERIA_PRIVATE_KEY"
-	# shellcheck disable=SC2034
-	XRAY_SERVICE_GROUP=$(id -gn)
-	ensure_xray_runtime_file_access
-	file_mode() {
-		stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
-	}
-	[ "$(file_mode "$XRAY_CONFIG_FILE")" = "640" ]
-	[ "$(file_mode "$XRAY_LOG_DIR/access.log")" = "660" ]
-	[ "$(file_mode "$XRAY_LOG_DIR/error.log")" = "660" ]
-	[ "$(file_mode "$XRAY_HYSTERIA_CONFIG_DIR")" = "710" ]
-	[ "$(file_mode "$XRAY_HYSTERIA_PRIVATE_KEY")" = "640" ]
-
-	printf '%s\n' '{"log":{"loglevel":"error"},"inbounds":[]}' \
-		> "$XRAY_CONFIG_FILE"
-	custom_sha=$(sha256sum "$XRAY_CONFIG_FILE" | awk '{ print $1 }')
-	prepare_xray_config
-	[ "$XRAY_CONFIG_OWNERSHIP" = "existing" ]
-	[ "$(sha256sum "$XRAY_CONFIG_FILE" | awk '{ print $1 }')" = "$custom_sha" ]
-
-	printf '%s\n' 'INVALID_CONFIG' > "$XRAY_CONFIG_FILE"
-	invalid_sha=$(sha256sum "$XRAY_CONFIG_FILE" | awk '{ print $1 }')
-	if (prepare_xray_config) >/dev/null 2>&1; then
-		printf '%s\n' "invalid existing Xray config was accepted" >&2
-		exit 1
-	fi
-	[ "$(sha256sum "$XRAY_CONFIG_FILE" | awk '{ print $1 }')" = "$invalid_sha" ]
-)
-
-printf '%s\n' "One Node action script checks passed"
+grep -F 'MANIFEST_FORMAT_V1="one-node-manifest-v1"' \
+	"$ROOT_DIR/scripts/node/shared/manifest.sh" >/dev/null
+grep -F 'MANIFEST_RECORD_PATH="${MANIFEST_INSTALL_DIR}/.installation"' \
+	"$ROOT_DIR/scripts/node/shared/manifest.sh" >/dev/null
+grep -F 'rm -rf -- "$MANIFEST_STATE_DIR"' \
+	"$ROOT_DIR/scripts/node/uninstall/paths.sh" >/dev/null
+if grep -R -E 'apt-get purge|docker system prune|docker (rm|rmi).*(xray|Xray)' \
+	"$ROOT_DIR/scripts/node/uninstall" >/dev/null; then
+	printf '%s\n' "uninstaller manages software outside its manifest" >&2
+	exit 1
+fi

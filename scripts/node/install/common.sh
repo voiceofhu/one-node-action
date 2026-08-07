@@ -1,7 +1,5 @@
 #!/bin/sh
 
-# Shared logging, help text, validation, and serialization helpers.
-
 log() {
 	printf '%s\n' "[one-node-node] $*"
 }
@@ -13,12 +11,12 @@ die() {
 
 show_help() {
 	printf '%s\n' \
-		"Install One Node." \
+		"Install the One Node sing-box data plane." \
 		"" \
 		"Usage: install.sh --mode <native|docker>" \
 		"" \
-		"  native  Install a systemd service." \
-		"  docker  Install a Docker Compose service."
+		"  native  Install one one-node-node systemd service." \
+		"  docker  Install one complete immutable One Node image."
 }
 
 require_value() {
@@ -31,7 +29,7 @@ require_single_line() {
 	name=$1
 	value=$2
 	case "$value" in
-		*'
+	*'
 '*|*''*) die "${name} must be a single line" ;;
 	esac
 }
@@ -43,9 +41,17 @@ normalize_sha256() {
 validate_sha256() {
 	digest=$1
 	case "$digest" in
-		''|*[!0-9a-f]*) return 1 ;;
+	''|*[!0-9a-f]*) return 1 ;;
 	esac
 	[ "${#digest}" -eq 64 ]
+}
+
+validate_decimal() {
+	value=$1
+	case "$value" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$value" = "0" ] || [ "${value#0}" = "$value" ]
 }
 
 escape_dotenv() {
@@ -59,24 +65,22 @@ write_env() {
 	key=$1
 	value=$2
 	escaped=$(escape_dotenv "$value")
-	printf '%s="%s"\n' "$key" "$escaped" >> "$ENV_SOURCE"
+	printf '%s="%s"\n' "$key" "$escaped" >>"$ENV_SOURCE"
 }
 
-download_binary() {
+download_file() {
 	url=$1
 	destination=$2
 	case "$url" in
-		https://*)
-			allowed_protocols='=https'
-			;;
-		http://*)
-			[ "$ONE_NODE_ALLOW_INSECURE" = "true" ] ||
-				die "HTTP binary downloads require ONE_NODE_ALLOW_INSECURE=true"
-			allowed_protocols='=http,https'
-			;;
-		*) die "binary download URL must use HTTP or HTTPS" ;;
+	https://*) protocols='=https' ;;
+	http://*)
+		[ "$ONE_NODE_ALLOW_INSECURE" = "true" ] ||
+			die "HTTP downloads require ONE_NODE_ALLOW_INSECURE=true"
+		protocols='=http,https'
+		;;
+	*) die "download URL must use HTTP or HTTPS" ;;
 	esac
 	curl --fail --location --silent --show-error --retry 3 \
-		--proto "$allowed_protocols" --proto-redir "$allowed_protocols" \
+		--proto "$protocols" --proto-redir "$protocols" \
 		--output "$destination" "$url"
 }

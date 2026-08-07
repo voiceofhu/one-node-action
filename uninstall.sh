@@ -1,14 +1,12 @@
 #!/bin/sh
 
-# Stable public entrypoint. The implementation is split under
-# scripts/node/uninstall so the public raw URL can remain unchanged.
+# Canonical sing-box uninstaller entrypoint. It removes only manifest-owned
+# One Node paths and never manages host proxy software or the Docker engine.
 
 set -eu
 umask 077
 
-ONE_NODE_ACTION_DEFAULT_BASE_URL="https://raw.githubusercontent.com/voiceofhu/one-node-action"
-ONE_NODE_ACTION_REF_API="https://api.github.com/repos/voiceofhu/one-node-action/git/ref/heads/main"
-ONE_NODE_UNINSTALL_MODULES="common.sh native.sh docker.sh xray.sh main.sh"
+ONE_NODE_UNINSTALL_MODULES="uninstall/common.sh shared/manifest.sh uninstall/paths.sh uninstall/native.sh uninstall/docker.sh uninstall/main.sh"
 ONE_NODE_ENTRYPOINT_TEMP_DIR=""
 
 entrypoint_die() {
@@ -23,73 +21,53 @@ entrypoint_cleanup() {
 
 entrypoint_local_source_dir() {
 	case "$0" in
-		*/*) ;;
-		*) return 1 ;;
+	*/*) ;;
+	*) return 1 ;;
 	esac
-
 	entrypoint_dir=$(CDPATH='' cd -- "$(dirname "$0")" 2>/dev/null && pwd) ||
 		return 1
-	source_dir="${entrypoint_dir}/scripts/node/uninstall"
-	[ -f "${source_dir}/main.sh" ] && [ ! -L "${source_dir}/main.sh" ] ||
+	source_dir="${entrypoint_dir}/scripts/node"
+	[ -f "${source_dir}/uninstall/main.sh" ] && [ ! -L "${source_dir}/uninstall/main.sh" ] ||
 		return 1
 	printf '%s\n' "$source_dir"
 }
 
-entrypoint_resolve_default_base_url() {
-	response=$(curl -q --proto '=https' --tlsv1.2 \
-		--fail --silent --show-error --no-location \
-		--connect-timeout 10 --max-time 30 --max-filesize 262144 \
-		--header 'Accept: application/vnd.github+json' \
-		--header 'X-GitHub-Api-Version: 2022-11-28' \
-		"$ONE_NODE_ACTION_REF_API") ||
-		entrypoint_die "unable to resolve the uninstaller commit from GitHub"
-	revision=$(printf '%s' "$response" | tr ',' '\n' |
-		awk -F'"' '$2 == "sha" { print $4; exit }')
-	[ "${#revision}" -eq 40 ] ||
-		entrypoint_die "GitHub returned an invalid uninstaller commit"
-	case "$revision" in
-		*[!0-9a-f]*)
-			entrypoint_die "GitHub returned an invalid uninstaller commit"
-			;;
+entrypoint_module_base_url() {
+	base_url=${ONE_NODE_SCRIPT_BASE_URL:-}
+	[ -n "$base_url" ] ||
+		entrypoint_die "ONE_NODE_SCRIPT_BASE_URL must pin the uninstaller modules"
+	base_url=${base_url%/}
+	case "$base_url" in
+	*/scripts/node) ;;
+	*) entrypoint_die "ONE_NODE_SCRIPT_BASE_URL must end in scripts/node" ;;
 	esac
-	printf '%s/%s/scripts/node/uninstall\n' \
-		"$ONE_NODE_ACTION_DEFAULT_BASE_URL" \
-		"$revision"
+	case "$base_url" in
+	https://*) ;;
+	http://127.0.0.1:*|http://localhost:*|http://host.orb.internal:*)
+		[ "${ONE_NODE_ALLOW_INSECURE:-false}" = "true" ] ||
+			entrypoint_die "local HTTP modules require ONE_NODE_ALLOW_INSECURE=true"
+		;;
+	*) entrypoint_die "uninstaller modules must use HTTPS" ;;
+	esac
+	printf '%s\n' "$base_url"
 }
 
 entrypoint_download_modules() {
 	destination=$1
 	command -v curl >/dev/null 2>&1 ||
 		entrypoint_die "curl is required to load the uninstaller"
-
-	if [ -n "${ONE_NODE_SCRIPT_BASE_URL:-}" ]; then
-		base_url=${ONE_NODE_SCRIPT_BASE_URL%/}
-		case "$base_url" in
-			*/uninstall) ;;
-			*) base_url="${base_url}/uninstall" ;;
-		esac
-	else
-		base_url=$(entrypoint_resolve_default_base_url)
-	fi
-
+	base_url=$(entrypoint_module_base_url)
 	case "$base_url" in
-		https://*)
-			transport_protocol='=https'
-			;;
-		http://127.0.0.1:*|http://localhost:*|http://host.orb.internal:*)
-			transport_protocol='=http'
-			;;
-		*)
-			entrypoint_die "ONE_NODE_SCRIPT_BASE_URL must use HTTPS or an approved local development host"
-			;;
+	https://*) protocols='=https' ;;
+	*) protocols='=http,https' ;;
 	esac
-
 	for module in $ONE_NODE_UNINSTALL_MODULES; do
-		curl -q --proto "$transport_protocol" --tlsv1.2 \
+		module_dir=${module%/*}
+		install -d -m 0700 "${destination}/${module_dir}"
+		curl -q --proto "$protocols" --proto-redir "$protocols" --tlsv1.2 \
 			--fail --silent --show-error --no-location \
 			--connect-timeout 10 --max-time 30 --max-filesize 1048576 \
-			"${base_url}/${module}" \
-			--output "${destination}/${module}" ||
+			"${base_url}/${module}" --output "${destination}/${module}" ||
 			entrypoint_die "unable to download uninstaller module: $module"
 		[ -s "${destination}/${module}" ] ||
 			entrypoint_die "downloaded uninstaller module is empty: $module"
@@ -108,7 +86,6 @@ entrypoint_load_modules() {
 		entrypoint_download_modules "$ONE_NODE_ENTRYPOINT_TEMP_DIR"
 		source_dir=$ONE_NODE_ENTRYPOINT_TEMP_DIR
 	fi
-
 	for module in $ONE_NODE_UNINSTALL_MODULES; do
 		module_path="${source_dir}/${module}"
 		[ -f "$module_path" ] && [ ! -L "$module_path" ] ||
@@ -116,7 +93,6 @@ entrypoint_load_modules() {
 		# shellcheck disable=SC1090
 		. "$module_path"
 	done
-
 	entrypoint_cleanup
 	ONE_NODE_ENTRYPOINT_TEMP_DIR=""
 	trap - EXIT HUP INT TERM
