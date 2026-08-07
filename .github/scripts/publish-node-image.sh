@@ -4,39 +4,51 @@ set -Eeuo pipefail
 
 : "${IMAGE:?IMAGE is required}"
 : "${IMAGE_REVISION_TAG:?IMAGE_REVISION_TAG is required}"
-: "${IMAGE_VERSION:?IMAGE_VERSION is required}"
+: "${IMAGE_RC_TAG:?IMAGE_RC_TAG is required}"
 : "${IMAGE_BUILD_TAG:?IMAGE_BUILD_TAG is required}"
 : "${IMAGE_SOURCE:?IMAGE_SOURCE is required}"
 : "${IMAGE_DESCRIPTION:?IMAGE_DESCRIPTION is required}"
 : "${IMAGE_REVISION:?IMAGE_REVISION is required}"
+: "${EXPECTED_VERSION:?EXPECTED_VERSION is required}"
+: "${EXPECTED_COMMIT:?EXPECTED_COMMIT is required}"
+: "${EXPECTED_UPSTREAM_VERSION:?EXPECTED_UPSTREAM_VERSION is required}"
+: "${EXPECTED_UPSTREAM_COMMIT:?EXPECTED_UPSTREAM_COMMIT is required}"
 
 should_build="${SHOULD_BUILD:-false}"
 revision_ref="$IMAGE:$IMAGE_REVISION_TAG"
+rc_ref="$IMAGE:$IMAGE_RC_TAG"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 inspect_script="$script_dir/inspect-node-image.sh"
 
-inspect_revision() {
-  if bash "$inspect_script" "$revision_ref"; then
+inspect_image() {
+  if bash "$inspect_script" "$1"; then
     return 0
   else
     return $?
   fi
 }
 
-platform_digest() {
+platform_fingerprint() {
   docker buildx imagetools inspect --raw "$1" |
     jq -er '
-      .manifests[]
-      | select(
-          .platform.os == "linux"
-          and .platform.architecture == "amd64"
-        )
-      | .digest
+      [
+        .manifests[]
+        | select(
+            .platform.os == "linux"
+            and (
+              .platform.architecture == "amd64"
+              or .platform.architecture == "arm64"
+            )
+          )
+        | "\(.platform.architecture)=\(.digest)"
+      ]
+      | sort
+      | join(",")
     '
 }
 
 if [ "$should_build" = "true" ]; then
-  if inspect_revision; then
+  if inspect_image "$revision_ref"; then
     echo "$revision_ref was published by an earlier queued run; keeping it unchanged."
   else
     status=$?
@@ -47,24 +59,23 @@ if [ "$should_build" = "true" ]; then
       --annotation "index:org.opencontainers.image.description=$IMAGE_DESCRIPTION" \
       --annotation "index:org.opencontainers.image.revision=$IMAGE_REVISION" \
       --annotation "index:org.opencontainers.image.source=$IMAGE_SOURCE" \
-      --annotation "index:org.opencontainers.image.version=$IMAGE_REVISION_TAG" \
+      --annotation "index:org.opencontainers.image.version=$EXPECTED_VERSION" \
       -t "$revision_ref" \
       "$IMAGE:$IMAGE_BUILD_TAG"
-    bash "$inspect_script" "$revision_ref"
+    inspect_image "$revision_ref"
   fi
 else
-  bash "$inspect_script" "$revision_ref"
+  inspect_image "$revision_ref"
 fi
 
-version_ref="$IMAGE:$IMAGE_VERSION"
-revision_digest="$(platform_digest "$revision_ref")"
-if bash "$inspect_script" "$version_ref"; then
-  version_digest="$(platform_digest "$version_ref")"
-  if [ "$version_digest" != "$revision_digest" ]; then
-    echo "$version_ref already points to a different linux/amd64 image." >&2
+revision_fingerprint="$(platform_fingerprint "$revision_ref")"
+if inspect_image "$rc_ref"; then
+  rc_fingerprint="$(platform_fingerprint "$rc_ref")"
+  if [ "$rc_fingerprint" != "$revision_fingerprint" ]; then
+    echo "$rc_ref already points to a different multi-architecture image." >&2
     exit 1
   fi
-  echo "$version_ref already points to the requested image; keeping it unchanged."
+  echo "$rc_ref already points to the requested image; keeping it unchanged."
 else
   status=$?
   if [ "$status" -ne 2 ]; then
@@ -74,10 +85,11 @@ else
     --annotation "index:org.opencontainers.image.description=$IMAGE_DESCRIPTION" \
     --annotation "index:org.opencontainers.image.revision=$IMAGE_REVISION" \
     --annotation "index:org.opencontainers.image.source=$IMAGE_SOURCE" \
-    --annotation "index:org.opencontainers.image.version=$IMAGE_VERSION" \
-    -t "$version_ref" \
+    --annotation "index:org.opencontainers.image.version=$EXPECTED_VERSION" \
+    -t "$rc_ref" \
     "$revision_ref"
+  inspect_image "$rc_ref"
 fi
 
 echo "Published immutable image $revision_ref"
-echo "Published install image $version_ref"
+echo "Published immutable RC image $rc_ref"

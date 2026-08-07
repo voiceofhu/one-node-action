@@ -1,15 +1,15 @@
-name: Release Node
-run-name: Release Node · ${{ inputs.version_tag }}
+name: Release Node RC
+run-name: Release Node RC · ${{ inputs.version_tag }}
 
 on:
   workflow_dispatch:
     inputs:
       node_ref:
-        description: one-node-node branch, tag, or commit
+        description: Immutable-capable Node branch, tag, or commit
         required: false
-        default: main
+        default: migration/sing-box-node
       version_tag:
-        description: Release version, for example v0.1.0
+        description: Immutable RC tag, for example node-rc-v26.806.2254-rc.1
         required: true
 
 permissions:
@@ -17,7 +17,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: release-node-${{ inputs.version_tag }}
+  group: release-node-rc-${{ inputs.version_tag }}
   cancel-in-progress: false
 
 env:
@@ -28,14 +28,17 @@ env:
 
 jobs:
   resolve:
-    name: Resolve source
+    name: Resolve immutable source
     runs-on: ubuntu-latest
     outputs:
       node_sha: ${{ steps.source.outputs.node_sha }}
       version: ${{ steps.source.outputs.version }}
+      upstream_version: ${{ steps.source.outputs.upstream_version }}
+      upstream_commit: ${{ steps.source.outputs.upstream_commit }}
       release_tag: ${{ steps.source.outputs.release_tag }}
       image_ref: ${{ steps.source.outputs.image_ref }}
       image_revision_tag: ${{ steps.source.outputs.image_revision_tag }}
+      image_rc_tag: ${{ steps.source.outputs.image_rc_tag }}
       image_build_tag: ${{ steps.source.outputs.image_build_tag }}
       should_build_image: ${{ steps.image.outputs.should_build }}
       gh_username: ${{ steps.github-identity.outputs.login }}
@@ -49,11 +52,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Validate public entrypoints
-        working-directory: one-node-action
-        run: make check
-
-      - name: Resolve immutable Node source
+      - name: Resolve immutable Node source and RC identity
         id: source
         shell: bash
         env:
@@ -64,31 +63,41 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          version=${VERSION_TAG_INPUT#node-v}
-          version=${version#v}
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
-            echo "version_tag must be a semantic version such as v0.1.0" >&2
+          if [[ "$VERSION_TAG_INPUT" =~ ^node-rc-v([0-9]+\.[0-9]+\.[0-9]+)-rc\.([1-9][0-9]*)$ ]]; then
+            version=${BASH_REMATCH[1]}
+            rc_number=${BASH_REMATCH[2]}
+          else
+            echo "version_tag must match node-rc-v<version>-rc.<positive-number>." >&2
             exit 1
-          }
+          fi
 
-          node_ref=${NODE_REF_INPUT:-main}
+          node_ref=${NODE_REF_INPUT:-migration/sing-box-node}
           encoded_ref=$(jq -rn --arg value "$node_ref" '$value | @uri')
-          node_sha=$(
-            gh api "repos/$NODE_REPOSITORY/commits/$encoded_ref" --jq .sha
-          )
+          node_sha=$(gh api "repos/$NODE_REPOSITORY/commits/$encoded_ref" --jq .sha)
           [[ "$node_sha" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "GitHub returned an invalid Node commit" >&2
+            echo "GitHub returned an invalid Node commit." >&2
             exit 1
           }
 
-          source_version=$(
-            gh api "repos/$NODE_REPOSITORY/contents/VERSION?ref=$node_sha" \
-              --jq .content |
+          read_node_file() {
+            gh api "repos/$NODE_REPOSITORY/contents/$1?ref=$node_sha" --jq .content |
               base64 --decode |
               tr -d '\r\n'
-          )
+          }
+
+          source_version=$(read_node_file VERSION)
+          upstream_version=$(read_node_file one/version/UPSTREAM_VERSION)
+          upstream_commit=$(read_node_file one/version/UPSTREAM_COMMIT)
           test "$source_version" = "$version" || {
-            echo "Requested Node version $version does not match VERSION $source_version." >&2
+            echo "Requested version $version does not match Node VERSION $source_version." >&2
+            exit 1
+          }
+          [[ "$upstream_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Node upstream version is invalid." >&2
+            exit 1
+          }
+          [[ "$upstream_commit" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Node upstream commit is invalid." >&2
             exit 1
           }
 
@@ -98,19 +107,25 @@ jobs:
             exit 1
           }
 
-          echo "node_sha=$node_sha" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "release_tag=node-v$version" >> "$GITHUB_OUTPUT"
-          echo "image_ref=$REGISTRY/$image_name" >> "$GITHUB_OUTPUT"
-          echo "image_revision_tag=sha-$node_sha" >> "$GITHUB_OUTPUT"
-          echo "image_build_tag=build-$node_sha-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          echo "node_sha=$node_sha" >>"$GITHUB_OUTPUT"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "upstream_version=$upstream_version" >>"$GITHUB_OUTPUT"
+          echo "upstream_commit=$upstream_commit" >>"$GITHUB_OUTPUT"
+          echo "release_tag=$VERSION_TAG_INPUT" >>"$GITHUB_OUTPUT"
+          echo "image_ref=$REGISTRY/$image_name" >>"$GITHUB_OUTPUT"
+          echo "image_revision_tag=sha-$node_sha" >>"$GITHUB_OUTPUT"
+          echo "image_rc_tag=rc-$version-rc.$rc_number" >>"$GITHUB_OUTPUT"
+          echo "image_build_tag=build-$node_sha-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >>"$GITHUB_OUTPUT"
 
       - name: Resolve GitHub token identity
         id: github-identity
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: echo "login=$(gh api user --jq .login)" >> "$GITHUB_OUTPUT"
+        run: echo "login=$(gh api user --jq .login)" >>"$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -122,28 +137,31 @@ jobs:
           username: ${{ steps.github-identity.outputs.login }}
           password: ${{ secrets.GH_TOKEN }}
 
-      - name: Decide whether to build image
+      - name: Decide whether immutable image must be built
         id: image
         shell: bash
         env:
           IMAGE_REF: ${{ steps.source.outputs.image_ref }}
           IMAGE_REVISION_TAG: ${{ steps.source.outputs.image_revision_tag }}
+          EXPECTED_VERSION: ${{ steps.source.outputs.version }}
+          EXPECTED_COMMIT: ${{ steps.source.outputs.node_sha }}
+          EXPECTED_UPSTREAM_VERSION: ${{ steps.source.outputs.upstream_version }}
+          EXPECTED_UPSTREAM_COMMIT: ${{ steps.source.outputs.upstream_commit }}
         run: |
           set -Eeuo pipefail
           if bash one-node-action/.github/scripts/inspect-node-image.sh \
             "$IMAGE_REF:$IMAGE_REVISION_TAG"; then
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-            echo "Using existing image $IMAGE_REF:$IMAGE_REVISION_TAG"
+            echo "should_build=false" >>"$GITHUB_OUTPUT"
           else
             status=$?
             if [ "$status" -ne 2 ]; then
               exit "$status"
             fi
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "should_build=true" >>"$GITHUB_OUTPUT"
           fi
 
-  build_native:
-    name: Build Node for linux/amd64
+  test:
+    name: Test immutable Node source
     needs: resolve
     runs-on: ubuntu-latest
 
@@ -173,42 +191,124 @@ jobs:
           go-version-file: one-node-node/go.mod
           cache-dependency-path: one-node-node/go.sum
 
+      - name: Run Node tests
+        working-directory: one-node-node
+        run: go test ./...
+
+      - name: Run core race tests
+        working-directory: one-node-node
+        run: go test -race ./one/access ./one/binding ./one/control ./one/runtime ./one/session ./one/state
+
+      - name: Run capability E2E tests
+        working-directory: one-node-node
+        run: make test-e2e
+
+      - name: Validate current public installer contract
+        working-directory: one-node-action
+        run: make check
+
+  build_native:
+    name: Build Node for linux/${{ matrix.architecture }}
+    needs:
+      - resolve
+      - test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture:
+          - amd64
+          - arm64
+
+    steps:
+      - name: Checkout Node
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.NODE_REPOSITORY }}
+          ref: ${{ needs.resolve.outputs.node_sha }}
+          path: one-node-node
+          token: ${{ secrets.GH_TOKEN }}
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: one-node-node/go.mod
+          cache-dependency-path: one-node-node/go.sum
+
       - name: Build release binary
         working-directory: one-node-node
         env:
-          VERSION: ${{ needs.resolve.outputs.version }}
-          NODE_SHA: ${{ needs.resolve.outputs.node_sha }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+          PRODUCT_VERSION: ${{ needs.resolve.outputs.version }}
+          PRODUCT_COMMIT: ${{ needs.resolve.outputs.node_sha }}
+          UPSTREAM_VERSION: ${{ needs.resolve.outputs.upstream_version }}
+          UPSTREAM_COMMIT: ${{ needs.resolve.outputs.upstream_commit }}
         run: |
-          make build-linux-amd64 \
-            VERSION="$VERSION" \
-            COMMIT="$NODE_SHA"
-          file dist/one-node-node-linux-amd64 | grep -q 'statically linked'
+          make "build-linux-$ARCHITECTURE" \
+            ONE_NODE_VERSION="$PRODUCT_VERSION" \
+            ONE_NODE_COMMIT="$PRODUCT_COMMIT" \
+            ONE_NODE_UPSTREAM_VERSION="$UPSTREAM_VERSION" \
+            ONE_NODE_UPSTREAM_COMMIT="$UPSTREAM_COMMIT"
+          test -x "dist/one-node-node-linux-$ARCHITECTURE"
 
-      - name: Assemble release assets
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          install -d release-assets
-          install -m 0755 \
-            one-node-node/dist/one-node-node-linux-amd64 \
-            release-assets/one-node-node-linux-amd64
-          (
-            cd release-assets
-            sha256sum one-node-node-linux-amd64 >SHA256SUMS
-          )
-
-      - name: Upload release artifact
+      - name: Upload architecture binary
         uses: actions/upload-artifact@v4
         with:
-          name: release-node-${{ needs.resolve.outputs.version }}
+          name: node-binary-${{ matrix.architecture }}
+          path: one-node-node/dist/one-node-node-linux-${{ matrix.architecture }}
+          if-no-files-found: error
+          retention-days: 30
+
+  assemble_release:
+    name: Assemble immutable RC assets
+    needs:
+      - resolve
+      - build_native
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-binary-amd64
           path: release-assets
+
+      - name: Download arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-binary-arm64
+          path: release-assets
+
+      - name: Create the single checksum manifest
+        working-directory: release-assets
+        run: |
+          set -Eeuo pipefail
+          test -f one-node-node-linux-amd64
+          test -f one-node-node-linux-arm64
+          chmod 0755 one-node-node-linux-amd64 one-node-node-linux-arm64
+          sha256sum \
+            one-node-node-linux-amd64 \
+            one-node-node-linux-arm64 >SHA256SUMS
+
+      - name: Upload exact release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ needs.resolve.outputs.release_tag }}
+          path: |
+            release-assets/one-node-node-linux-amd64
+            release-assets/one-node-node-linux-arm64
+            release-assets/SHA256SUMS
           if-no-files-found: error
           retention-days: 30
 
   build_image:
-    name: Build Node image for linux/amd64
+    name: Build multi-architecture Node image
     needs:
       - resolve
+      - test
       - build_native
     if: needs.resolve.outputs.should_build_image == 'true'
     runs-on: ubuntu-latest
@@ -225,14 +325,23 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Download tested Node binary
+      - name: Download amd64 binary
         uses: actions/download-artifact@v4
         with:
-          name: release-node-${{ needs.resolve.outputs.version }}
+          name: node-binary-amd64
           path: one-node-node/dist
+
+      - name: Download arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-binary-arm64
+          path: one-node-node/dist
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -241,12 +350,12 @@ jobs:
           username: ${{ needs.resolve.outputs.gh_username }}
           password: ${{ secrets.GH_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push immutable candidate image
         uses: docker/build-push-action@v6
         with:
           context: one-node-node
-          file: one-node-node/deploy/docker/Dockerfile
-          platforms: linux/amd64
+          file: one-node-node/one/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ needs.resolve.outputs.image_ref }}:${{ needs.resolve.outputs.image_build_tag }}
           labels: |
@@ -256,89 +365,28 @@ jobs:
             org.opencontainers.image.documentation=https://github.com/voiceofhu/one-node-action
             org.opencontainers.image.revision=${{ needs.resolve.outputs.node_sha }}
             org.opencontainers.image.version=${{ needs.resolve.outputs.version }}
-          cache-from: type=gha,scope=one-node-node-amd64
-          cache-to: type=gha,scope=one-node-node-amd64,mode=max
-
-  publish_release:
-    name: Publish Node release
-    needs:
-      - resolve
-      - build_native
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download release assets
-        uses: actions/download-artifact@v4
-        with:
-          name: release-node-${{ needs.resolve.outputs.version }}
-          path: dist
-
-      - name: Publish immutable Action release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          RELEASE_SHA: ${{ github.sha }}
-          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
-          VERSION: ${{ needs.resolve.outputs.version }}
-          NODE_SHA: ${{ needs.resolve.outputs.node_sha }}
-          IMAGE_REF: ${{ needs.resolve.outputs.image_ref }}
-        run: |
-          set -Eeuo pipefail
-          test "$GITHUB_REPOSITORY" = "$RELEASE_REPOSITORY" || {
-            echo "Node releases may only be published by $RELEASE_REPOSITORY." >&2
-            exit 1
-          }
-
-          release_body="$(
-            printf 'Node source: %s@%s\nDocker image: %s:%s\nImmutable image: %s:sha-%s' \
-              "$NODE_REPOSITORY" "$NODE_SHA" \
-              "$IMAGE_REF" "$VERSION" \
-              "$IMAGE_REF" "$NODE_SHA"
-          )"
-          if existing_release=$(
-            gh release view "$RELEASE_TAG" \
-              --repo "$RELEASE_REPOSITORY" \
-              --json body,assets 2>/dev/null
-          ); then
-            existing_source=$(jq -r '.body // "" | split("\n")[0]' <<<"$existing_release")
-            expected_source="Node source: $NODE_REPOSITORY@$NODE_SHA"
-            test "$existing_source" = "$expected_source" || {
-              echo "Release $RELEASE_TAG belongs to a different Node source." >&2
-              exit 1
-            }
-            for asset in \
-              one-node-node-linux-amd64 \
-              SHA256SUMS; do
-              jq -e --arg asset "$asset" \
-                '.assets | any(.[]; .name == $asset)' \
-                <<<"$existing_release" >/dev/null || {
-                  echo "Release $RELEASE_TAG is incomplete; refusing to mutate it." >&2
-                  exit 1
-                }
-            done
-            echo "Immutable Node release $RELEASE_TAG already exists."
-            exit 0
-          fi
-
-          gh release create "$RELEASE_TAG" dist/* \
-            --repo "$RELEASE_REPOSITORY" \
-            --target "$RELEASE_SHA" \
-            --title "One Node v$VERSION" \
-            --notes "$release_body"
+            io.one-node.upstream.version=${{ needs.resolve.outputs.upstream_version }}
+            io.one-node.upstream.commit=${{ needs.resolve.outputs.upstream_commit }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=one-node-node-rc
+          cache-to: type=gha,scope=one-node-node-rc,mode=max
 
   publish_image:
-    name: Publish Node image
+    name: Publish immutable RC image
     needs:
       - resolve
+      - test
       - build_image
     if: >-
       always() &&
       !cancelled() &&
       needs.resolve.result == 'success' &&
+      needs.test.result == 'success' &&
       (needs.resolve.outputs.should_build_image == 'false' || needs.build_image.result == 'success')
     runs-on: ubuntu-latest
     concurrency:
-      group: one-node-node-image
+      group: one-node-node-rc-image
       cancel-in-progress: false
 
     steps:
@@ -350,6 +398,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -360,15 +411,111 @@ jobs:
           username: ${{ needs.resolve.outputs.gh_username }}
           password: ${{ secrets.GH_TOKEN }}
 
-      - name: Publish versioned image
+      - name: Publish immutable revision and RC tags
         shell: bash
         env:
           IMAGE: ${{ needs.resolve.outputs.image_ref }}
           IMAGE_REVISION_TAG: ${{ needs.resolve.outputs.image_revision_tag }}
-          IMAGE_VERSION: ${{ needs.resolve.outputs.version }}
+          IMAGE_RC_TAG: ${{ needs.resolve.outputs.image_rc_tag }}
           IMAGE_BUILD_TAG: ${{ needs.resolve.outputs.image_build_tag }}
           SHOULD_BUILD: ${{ needs.resolve.outputs.should_build_image }}
           IMAGE_SOURCE: https://github.com/voiceofhu/one-node-node
           IMAGE_DESCRIPTION: One Node runtime agent
           IMAGE_REVISION: ${{ needs.resolve.outputs.node_sha }}
+          EXPECTED_VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_COMMIT: ${{ needs.resolve.outputs.node_sha }}
+          EXPECTED_UPSTREAM_VERSION: ${{ needs.resolve.outputs.upstream_version }}
+          EXPECTED_UPSTREAM_COMMIT: ${{ needs.resolve.outputs.upstream_commit }}
         run: bash one-node-action/.github/scripts/publish-node-image.sh
+
+  publish_release:
+    name: Publish immutable Node RC release
+    needs:
+      - resolve
+      - test
+      - assemble_release
+      - publish_image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download exact release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-${{ needs.resolve.outputs.release_tag }}
+          path: dist
+
+      - name: Publish or verify immutable Action RC release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          NODE_SHA: ${{ needs.resolve.outputs.node_sha }}
+          UPSTREAM_VERSION: ${{ needs.resolve.outputs.upstream_version }}
+          UPSTREAM_COMMIT: ${{ needs.resolve.outputs.upstream_commit }}
+          IMAGE_REF: ${{ needs.resolve.outputs.image_ref }}
+          IMAGE_RC_TAG: ${{ needs.resolve.outputs.image_rc_tag }}
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REPOSITORY" = "$RELEASE_REPOSITORY" || {
+            echo "Node releases may only be published by $RELEASE_REPOSITORY." >&2
+            exit 1
+          }
+
+          expected_assets=$'SHA256SUMS\none-node-node-linux-amd64\none-node-node-linux-arm64'
+          actual_local_assets=$(find dist -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort)
+          test "$actual_local_assets" = "$expected_assets" || {
+            echo "Local RC asset set is not exact." >&2
+            exit 1
+          }
+
+          release_body="$(
+            printf 'Node source: %s@%s\nUpstream: sing-box %s@%s\nDocker image: %s:%s\nImmutable image: %s:sha-%s' \
+              "$NODE_REPOSITORY" "$NODE_SHA" \
+              "$UPSTREAM_VERSION" "$UPSTREAM_COMMIT" \
+              "$IMAGE_REF" "$IMAGE_RC_TAG" \
+              "$IMAGE_REF" "$NODE_SHA"
+          )"
+
+          if existing_release=$(gh release view "$RELEASE_TAG" \
+            --repo "$RELEASE_REPOSITORY" \
+            --json body,assets,isPrerelease 2>/dev/null); then
+            jq -e --arg body "$release_body" \
+              '.isPrerelease == true and .body == $body' \
+              <<<"$existing_release" >/dev/null || {
+                echo "Release $RELEASE_TAG has different immutable metadata." >&2
+                exit 1
+              }
+            actual_remote_assets=$(
+              jq -r '.assets[].name' <<<"$existing_release" | LC_ALL=C sort
+            )
+            test "$actual_remote_assets" = "$expected_assets" || {
+              echo "Release $RELEASE_TAG has a different asset set." >&2
+              exit 1
+            }
+
+            existing_dir=$(mktemp -d)
+            trap 'rm -rf "$existing_dir"' EXIT
+            gh release download "$RELEASE_TAG" \
+              --repo "$RELEASE_REPOSITORY" \
+              --dir "$existing_dir"
+            for asset in SHA256SUMS one-node-node-linux-amd64 one-node-node-linux-arm64; do
+              cmp -s "dist/$asset" "$existing_dir/$asset" || {
+                echo "Release $RELEASE_TAG asset $asset differs; refusing mutation." >&2
+                exit 1
+              }
+            done
+            echo "Immutable Node RC release $RELEASE_TAG already exists with identical bytes."
+            exit 0
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            dist/SHA256SUMS \
+            dist/one-node-node-linux-amd64 \
+            dist/one-node-node-linux-arm64 \
+            --repo "$RELEASE_REPOSITORY" \
+            --target "$RELEASE_SHA" \
+            --title "One Node v$VERSION RC" \
+            --notes "$release_body" \
+            --prerelease
