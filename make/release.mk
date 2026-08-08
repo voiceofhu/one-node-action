@@ -18,8 +18,7 @@ deploy-node:
 	elif [ -n "$$input_version" ]; then \
 		version="$$input_version"; \
 	else \
-		generated_tag="$$($(MAKE) --no-print-directory -s -C "$$node_dir" generated-tag)"; \
-		version="$${generated_tag#v}"; \
+		version="$(GENERATED_VERSION)"; \
 	fi; \
 	version="$${version#v}"; \
 	[[ "$$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$$ ]] || { \

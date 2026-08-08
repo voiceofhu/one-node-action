@@ -20,3 +20,4 @@ check: proto-contract
 	bash -n "$(PROJECT_ROOT)/.github/scripts/deploy-server.sh"
 	"$(PROJECT_ROOT)/tests/scripts_test.sh"
 	$(MAKE) --no-print-directory deploy-server DRY_RUN=true VERSION=1.2.3 >/dev/null
+	$(MAKE) --no-print-directory deploy-node DRY_RUN=true >/dev/null
