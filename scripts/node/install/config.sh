@@ -17,14 +17,19 @@ initialize_install_config() {
 	ONE_NODE_ID=${ONE_NODE_ID:-}
 	ONE_NODE_BOOTSTRAP_TOKEN=${ONE_NODE_BOOTSTRAP_TOKEN:-}
 	ONE_NODE_VERSION=${ONE_NODE_VERSION:-}
-	ONE_NODE_RELEASE_BASE_URL=${ONE_NODE_RELEASE_BASE_URL:-}
+	ONE_NODE_RELEASE_BASE_URL=${ONE_NODE_RELEASE_BASE_URL:-https://github.com/voiceofhu/one-node-action/releases/latest/download}
 	ONE_NODE_BINARY_SHA256_AMD64=${ONE_NODE_BINARY_SHA256_AMD64:-}
 	ONE_NODE_BINARY_SHA256_ARM64=${ONE_NODE_BINARY_SHA256_ARM64:-}
-	ONE_NODE_DOCKER_IMAGE=${ONE_NODE_DOCKER_IMAGE:-}
+	ONE_NODE_DOCKER_IMAGE=${ONE_NODE_DOCKER_IMAGE:-ghcr.io/voiceofhu/one-node-node:latest}
 	ONE_NODE_STATE_DIR=${ONE_NODE_STATE_DIR:-/var/lib/one-node-node}
 	ONE_NODE_EXPECTED_CONFIG_REVISION=${ONE_NODE_EXPECTED_CONFIG_REVISION:-0}
 	ONE_NODE_EXPECTED_BINDINGS_REVISION=${ONE_NODE_EXPECTED_BINDINGS_REVISION:-0}
-	ONE_NODE_ALLOW_INSECURE=${ONE_NODE_ALLOW_INSECURE:-false}
+	if [ "${ONE_NODE_ALLOW_INSECURE+x}" != x ]; then
+		case "$ONE_NODE_SERVER" in
+		https://*|grpcs://*) ONE_NODE_ALLOW_INSECURE=false ;;
+		*) ONE_NODE_ALLOW_INSECURE=true ;;
+		esac
+	fi
 	ONE_NODE_ENROLL_TIMEOUT=${ONE_NODE_ENROLL_TIMEOUT:-120}
 	ONE_NODE_ARCH=""
 	ONE_NODE_BINARY_NAME=""
@@ -58,7 +63,6 @@ validate_install_config() {
 		"ONE_NODE_SERVER|$ONE_NODE_SERVER" \
 		"ONE_NODE_ID|$ONE_NODE_ID" \
 		"ONE_NODE_BOOTSTRAP_TOKEN|$ONE_NODE_BOOTSTRAP_TOKEN" \
-		"ONE_NODE_VERSION|$ONE_NODE_VERSION" \
 		"ONE_NODE_EXPECTED_CONFIG_REVISION|$ONE_NODE_EXPECTED_CONFIG_REVISION" \
 		"ONE_NODE_EXPECTED_BINDINGS_REVISION|$ONE_NODE_EXPECTED_BINDINGS_REVISION"
 	do
@@ -71,9 +75,11 @@ validate_install_config() {
 	case "$ONE_NODE_ID" in
 	''|*[!0-9]*|0) die "ONE_NODE_ID must be a positive integer" ;;
 	esac
-	case "$ONE_NODE_VERSION" in
-	''|*[!0-9.]*) die "ONE_NODE_VERSION must be a dotted numeric version" ;;
-	esac
+	if [ -n "$ONE_NODE_VERSION" ]; then
+		case "$ONE_NODE_VERSION" in
+		*[!0-9.]*) die "ONE_NODE_VERSION must be a dotted numeric version" ;;
+		esac
+	fi
 	validate_decimal "$ONE_NODE_EXPECTED_CONFIG_REVISION" ||
 		die "ONE_NODE_EXPECTED_CONFIG_REVISION must be canonical decimal"
 	validate_decimal "$ONE_NODE_EXPECTED_BINDINGS_REVISION" ||
@@ -103,16 +109,6 @@ validate_install_config() {
 
 	if [ "$INSTALL_MODE" = "native" ]; then
 		require_value "ONE_NODE_RELEASE_BASE_URL" "$ONE_NODE_RELEASE_BASE_URL"
-		release_tag=${ONE_NODE_RELEASE_BASE_URL%/}
-		release_tag=${release_tag##*/}
-		case "$release_tag" in
-		node-rc-v"$ONE_NODE_VERSION"-rc.*) ;;
-		*) die "ONE_NODE_RELEASE_BASE_URL must pin the requested immutable RC" ;;
-		esac
-		rc_number=${release_tag##*.}
-		case "$rc_number" in
-		''|*[!0-9]*|0) die "ONE_NODE_RELEASE_BASE_URL has an invalid RC number" ;;
-		esac
 		case "$ONE_NODE_RELEASE_BASE_URL" in
 		https://*) ;;
 		http://*)
@@ -121,18 +117,8 @@ validate_install_config() {
 			;;
 		*) die "ONE_NODE_RELEASE_BASE_URL must use HTTP or HTTPS" ;;
 		esac
-		ONE_NODE_BINARY_SHA256=$(normalize_sha256 "$ONE_NODE_BINARY_SHA256")
-		validate_sha256 "$ONE_NODE_BINARY_SHA256" ||
-			die "selected binary checksum must be a pinned SHA-256"
 		ONE_NODE_BINARY_URL="${ONE_NODE_RELEASE_BASE_URL%/}/${ONE_NODE_BINARY_NAME}"
 	else
 		require_value "ONE_NODE_DOCKER_IMAGE" "$ONE_NODE_DOCKER_IMAGE"
-		case "$ONE_NODE_DOCKER_IMAGE" in
-		*@sha256:*) ;;
-		*) die "ONE_NODE_DOCKER_IMAGE must be pinned by digest" ;;
-		esac
-		image_digest=${ONE_NODE_DOCKER_IMAGE##*@sha256:}
-		validate_sha256 "$(normalize_sha256 "$image_digest")" ||
-			die "ONE_NODE_DOCKER_IMAGE has an invalid digest"
 	fi
 }

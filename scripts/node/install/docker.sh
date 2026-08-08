@@ -20,13 +20,14 @@ ensure_docker() {
 prepare_docker_image() {
 	ensure_docker
 	docker pull "$ONE_NODE_DOCKER_IMAGE"
+	ONE_NODE_DOCKER_IMAGE=$(docker image inspect --format '{{index .RepoDigests 0}}' "$ONE_NODE_DOCKER_IMAGE") ||
+		die "unable to resolve the downloaded Docker image digest"
+	manifest_validate_image "$ONE_NODE_DOCKER_IMAGE" ||
+		die "downloaded Docker image does not have a valid digest"
 	version_output=$(docker run --rm --entrypoint /usr/local/bin/one-node-node \
 		"$ONE_NODE_DOCKER_IMAGE" version) ||
 		die "immutable One Node image cannot run on this machine"
-	case "$version_output" in
-	"one-node-node $ONE_NODE_VERSION "*"; sing-box "*) ;;
-	*) die "immutable image has unexpected product or data-plane metadata" ;;
-	esac
+	set_runtime_version "$version_output" "Docker image"
 }
 
 write_docker_source() {

@@ -15,11 +15,11 @@ Server 使用以下稳定 URL：
 
 根目录文件只负责稳定入口和模块加载。实际逻辑放在 `scripts/node/`，按公共
 manifest、安装、升级、回滚和卸载拆分。模块清单由根入口显式声明，远程执行时
-会从 Server 固定的同一 immutable URL 下载并校验语法后统一加载。
+默认从本仓库的 GitHub raw 地址下载并校验语法后统一加载；本地或开发环境仍可
+通过 `ONE_NODE_SCRIPT_BASE_URL` 覆盖模块地址。
 
-Server 生成命令时会同时固定入口脚本、`ONE_NODE_SCRIPT_BASE_URL` 和发布资产，
-确保单次安装不会混用不同提交的文件。本地直接运行根目录脚本时，会使用工作区
-中的实现，便于测试。
+Server 生成命令只传递节点注册所需的地址、身份和一次性令牌。本地直接运行根目录
+脚本时，会使用工作区中的实现，便于测试。
 
 安装方式保持不变：
 
@@ -36,8 +36,8 @@ Server 生成命令时会同时固定入口脚本、`ONE_NODE_SCRIPT_BASE_URL` �
 Docker Engine。成功条件为控制面身份激活且 runtime active revision 达到 Server
 指定值；配置 revision 未指定时仍必须观测到大于零的有效配置。
 
-Server 为安装器提供不可变版本、release URL、架构对应 SHA-256 或完整镜像
-digest，以及期望的配置和 Binding revision。目标 Debian 需要预先提供 `curl`；
+安装器默认从 GitHub Release 和 GHCR 获取当前节点版本；Native 模式会使用同一
+Release 的 `SHA256SUMS` 校验下载的二进制。目标 Debian 需要预先提供 `curl`；
 安装器会继续检查其余必备命令。
 
 ## Release Node

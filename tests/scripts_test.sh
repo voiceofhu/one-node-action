@@ -106,6 +106,8 @@ for entrypoint in install.sh uninstall.sh upgrade.sh; do
 		ONE_NODE_ALLOW_INSECURE=true \
 		ONE_NODE_SCRIPT_BASE_URL="http://127.0.0.1:9999/scripts/node" \
 		"$TEST_TEMP_DIR/$entrypoint" --help >/dev/null
+	PATH="$TEST_TEMP_DIR/bin:$PATH" \
+		"$TEST_TEMP_DIR/$entrypoint" --help >/dev/null
 done
 
 grep -F 'MANIFEST_FORMAT_V1="one-node-manifest-v1"' \

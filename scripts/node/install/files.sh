@@ -49,6 +49,22 @@ on_install_exit() {
 
 prepare_native_binary() {
 	log "downloading ${ONE_NODE_BINARY_NAME}"
+	if [ -z "$ONE_NODE_BINARY_SHA256" ]; then
+		checksum_source="${TEMP_DIR}/SHA256SUMS"
+		download_file "${ONE_NODE_RELEASE_BASE_URL%/}/SHA256SUMS" "$checksum_source"
+		ONE_NODE_BINARY_SHA256=$(awk -v name="$ONE_NODE_BINARY_NAME" '
+			$2 == name || $2 == "*" name {
+				if (found++) { exit 1 }
+				value = tolower($1)
+			}
+			END {
+				if (found != 1) exit 1
+				print value
+			}
+		' "$checksum_source") || die "release checksum is missing ${ONE_NODE_BINARY_NAME}"
+		validate_sha256 "$ONE_NODE_BINARY_SHA256" ||
+			die "release checksum for ${ONE_NODE_BINARY_NAME} is invalid"
+	fi
 	download_file "$ONE_NODE_BINARY_URL" "$BINARY_SOURCE"
 	actual_sha256=$(sha256sum "$BINARY_SOURCE" | awk '{ print $1 }')
 	[ "$actual_sha256" = "$ONE_NODE_BINARY_SHA256" ] ||
@@ -56,10 +72,24 @@ prepare_native_binary() {
 	chmod 0755 "$BINARY_SOURCE"
 	version_output=$("$BINARY_SOURCE" version) ||
 		die "downloaded binary cannot run on this machine"
+	set_runtime_version "$version_output" "downloaded binary"
+}
+
+set_runtime_version() {
+	version_output=$1
+	asset_name=$2
 	case "$version_output" in
-	"one-node-node $ONE_NODE_VERSION "*"; sing-box "*) ;;
-	*) die "downloaded binary has unexpected product or data-plane metadata" ;;
+	one-node-node\ *\;\ sing-box\ *) ;;
+	*) die "$asset_name has unexpected product or data-plane metadata" ;;
 	esac
+	runtime_version=${version_output#one-node-node }
+	runtime_version=${runtime_version%% *}
+	manifest_validate_version "$runtime_version" ||
+		die "$asset_name returned an invalid version"
+	if [ -n "$ONE_NODE_VERSION" ] && [ "$ONE_NODE_VERSION" != "$runtime_version" ]; then
+		die "$asset_name version $runtime_version does not match requested $ONE_NODE_VERSION"
+	fi
+	ONE_NODE_VERSION=$runtime_version
 }
 
 write_common_sources() {

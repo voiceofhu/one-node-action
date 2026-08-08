@@ -32,9 +32,7 @@ entrypoint_local_source_dir() {
 }
 
 entrypoint_module_base_url() {
-	base_url=${ONE_NODE_SCRIPT_BASE_URL:-}
-	[ -n "$base_url" ] ||
-		entrypoint_die "ONE_NODE_SCRIPT_BASE_URL must pin the installer modules"
+	base_url=${ONE_NODE_SCRIPT_BASE_URL:-https://raw.githubusercontent.com/voiceofhu/one-node-action/refs/heads/main/scripts/node}
 	base_url=${base_url%/}
 	case "$base_url" in
 	*/scripts/node) ;;
